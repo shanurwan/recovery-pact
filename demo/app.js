@@ -6,9 +6,9 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const SIDES = {
-  naive_single: { name: "Typical AI agent", sub: "One AI with database access fixes it on its own." },
-  gated_single: { name: "AI agent + safety rules", sub: "One AI, the same safety authority, checks only the database." },
-  pact: { name: "RecoveryPact", sub: "Database AI and Business AI negotiate; a safety authority decides; the business defines “fixed”." },
+  naive_single: { name: "Typical AI agent", short: "Typical agent", sub: "One AI with database access fixes it on its own." },
+  gated_single: { name: "AI agent + safety rules", short: "Agent + rules", sub: "One AI, the same safety authority, checks only the database." },
+  pact: { name: "RecoveryPact", short: "RecoveryPact", sub: "Database AI and Business AI negotiate; a safety authority decides; the business defines “fixed”." },
 };
 const WHO_CLASS = {
   database_guardian: "db", solo_agent: "db", continuity_guardian: "biz", recovery_auditor: "biz",
@@ -31,9 +31,19 @@ async function init() {
     $("#story").innerHTML = `<p>Replay data is missing. Build it with <code>python -m app.evals.build_demo</code>.</p>`;
     return;
   }
+  renderHeadline();
+  const per = state.index.per_scenario || {};
   const tabs = $("#tabs");
+  tabs.setAttribute("role", "tablist");
   tabs.innerHTML = state.index.scenarios
-    .map((s) => `<button class="tab" type="button" role="tab" data-id="${esc(s.id)}">${esc(s.title)}</button>`)
+    .map((s) => {
+      const p = per[s.id] || {};
+      const them = p.naive_single ?? "–";
+      return `<button class="tab" type="button" role="tab" data-id="${esc(s.id)}">
+        <span class="t-title">${esc(s.title)}</span>
+        <span class="t-score"><span class="chip ${them.startsWith("0") ? "bad" : "good"}">${them.startsWith("0") ? "✗" : "✓"} ${esc(SIDES.naive_single.short)} ${esc(them)}</span>
+        <span class="chip good">✓ RecoveryPact ${esc(p.pact ?? "–")}</span></span></button>`;
+    })
     .join("");
   tabs.addEventListener("click", (e) => {
     const b = e.target.closest(".tab");
@@ -41,11 +51,23 @@ async function init() {
   });
   renderScoreboard();
   const hash = location.hash.slice(1);
-  const first = state.index.scenarios.find((s) => s.id.startsWith(hash.toUpperCase())) || state.index.scenarios[0];
-  select(first.id);
+  const first = state.index.scenarios.find((s) => hash.length <= 2 && s.id.startsWith(hash.toUpperCase()) && hash) || state.index.scenarios[0];
+  select(first.id, false);
 }
 
-async function select(id) {
+function renderHeadline() {
+  const a = state.index.aggregate;
+  const us = a.pact, naive = a.naive_single || {}, gated = a.gated_single || {};
+  const stat = (big, what, them) => `<div class="hstat glass"><span class="big">${big}</span><span class="what">${what}</span><span class="them">${them}</span></div>`;
+  $("#headline-stats").innerHTML = [
+    stat(`${us.correct}/${us.runs}`, "right calls", `Typical AI agent: <b>${naive.correct}/${naive.runs}</b>`),
+    stat(us.unsafe_actions, "unsafe actions", `Typical AI agent: <b>${naive.unsafe_actions}</b>`),
+    stat(us.settlements_aborted ?? 0, "card settlements aborted", `Typical AI agent: <b>${naive.settlements_aborted ?? "–"}</b>`),
+    stat(us.false_recovery_claims, "false “fixed” claims", `Agent + safety rules: <b>${gated.false_recovery_claims ?? "–"}</b> · Typical: <b>${naive.false_recovery_claims}</b>`),
+  ].join("");
+}
+
+async function select(id, scroll = true) {
   stop();
   state.scenario = state.index.scenarios.find((s) => s.id === id);
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.id === id)));
@@ -61,7 +83,8 @@ async function select(id) {
   const pick = $("#leftpick");
   if (pick) pick.addEventListener("change", () => { state.left = pick.value; loadSides(); });
   if (!leftChoices.includes(state.left)) state.left = leftChoices[0];
-  loadSides();
+  await loadSides();
+  if (scroll) $("#story").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function loadSides() {
@@ -70,6 +93,7 @@ async function loadSides() {
   state.data = { left: l, right: r };
   state.clock = Infinity; // complete at rest: everything visible until Replay is pressed
   render();
+  setScene(1);
 }
 
 function sideHtml(d, key) {
@@ -77,7 +101,7 @@ function sideHtml(d, key) {
   return `<div class="side-head"><span class="name">${esc(meta.name)}</span><span class="sub">${esc(meta.sub)}</span>
       <span class="prov">Recorded ${esc(new Date(d.started_at).toUTCString())} · ${esc((d.model || "").replace("nvidia/", ""))} · ${esc(d.run_id)} ·
       <a href="${REPO + esc(d.source_file)}" target="_blank" rel="noopener">raw trace</a></span></div>
-    <div class="chart"><svg id="chart-${key}" viewBox="0 0 600 70" preserveAspectRatio="none" role="img" aria-label="Checkouts per second during this run: green succeeded, red failed"></svg>
+    <div class="chart"><svg id="chart-${key}" viewBox="0 0 600 86" preserveAspectRatio="none" role="img" aria-label="Checkouts per second during this run: green succeeded, red failed"></svg>
       <div class="legend"><span>checkouts per second</span><span id="cnt-${key}"></span></div></div>
     <ol class="feed" id="feed-${key}"></ol>
     <div id="verdict-${key}"></div>`;
@@ -126,28 +150,55 @@ function techText(e) {
   return parts.filter(Boolean).join("\n");
 }
 
+function series(d) {
+  const span = Math.ceil(Math.max(horizon(), 1));
+  const ok = new Array(span + 1).fill(0), bad = new Array(span + 1).fill(0);
+  for (const [t, o, b] of d.pulse) {
+    if (t >= 0 && t <= span) { ok[t] += o; bad[t] += b; }
+  }
+  return { span, ok, bad };
+}
+
 function drawChart(d, key) {
   const svg = $(`#chart-${key}`);
-  const W = 600, H = 70;
-  const span = Math.max(horizon(), 1);
-  const max = Math.max(4, ...d.pulse.map((p) => p[1] + p[2]));
-  const bw = Math.max(1, W / span - 0.5);
-  let out = "", ok = 0, bad = 0;
-  for (const [t, o, b] of d.pulse) {
-    const x = (t / span) * W;
-    const live = t <= state.clock;
-    const op = live ? 1 : 0.18;
-    if (live) { ok += o; bad += b; }
-    const ho = (o / max) * H, hb = (b / max) * H;
-    if (o) out += `<rect x="${x.toFixed(1)}" y="${(H - ho).toFixed(1)}" width="${bw.toFixed(1)}" height="${ho.toFixed(1)}" fill="var(--chart-ok)" opacity="${op}"/>`;
-    if (b) out += `<rect x="${x.toFixed(1)}" y="${(H - ho - hb).toFixed(1)}" width="${bw.toFixed(1)}" height="${hb.toFixed(1)}" fill="var(--chart-bad)" opacity="${op}"/>`;
-  }
-  if (Number.isFinite(state.clock)) {
-    const cx = Math.min(W, (state.clock / span) * W);
-    out += `<line x1="${cx}" x2="${cx}" y1="0" y2="${H}" stroke="var(--ink)" stroke-width="1.5"/>`;
-  }
-  svg.innerHTML = out;
-  $(`#cnt-${key}`).textContent = `${ok} ok · ${bad} failed`;
+  const W = 600, H = 86, pad = 4;
+  const { span, ok, bad } = series(d);
+  const max = Math.max(4, ...ok.map((o, i) => o + bad[i]));
+  const x = (i) => (i / span) * W;
+  const y = (v) => H - pad - (v / max) * (H - pad * 2);
+  const area = (top, base) => {
+    let p = `M0,${y(base[0])}`;
+    for (let i = 0; i <= span; i++) p += ` L${x(i).toFixed(1)},${y(top[i]).toFixed(1)}`;
+    for (let i = span; i >= 0; i--) p += ` L${x(i).toFixed(1)},${y(base[i]).toFixed(1)}`;
+    return p + "Z";
+  };
+  const zero = ok.map(() => 0);
+  const stack = ok.map((o, i) => o + bad[i]);
+  const cut = Number.isFinite(state.clock) ? Math.min(W, (state.clock / span) * W) : W;
+  let okSum = 0, badSum = 0;
+  for (let i = 0; i <= span; i++) if (i <= state.clock) { okSum += ok[i]; badSum += bad[i]; }
+  const id = `c-${key}`;
+  svg.innerHTML = `<defs>
+      <linearGradient id="${id}-ok" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--biz)" stop-opacity=".9"/><stop offset="1" stop-color="var(--biz)" stop-opacity=".15"/></linearGradient>
+      <linearGradient id="${id}-bad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--bad)" stop-opacity=".95"/><stop offset="1" stop-color="var(--bad)" stop-opacity=".35"/></linearGradient>
+      <clipPath id="${id}-clip"><rect x="0" y="0" width="${cut}" height="${H}"/></clipPath>
+    </defs>
+    <g opacity=".16"><path d="${area(ok, zero)}" fill="var(--biz)"/><path d="${area(stack, ok)}" fill="var(--bad)"/></g>
+    <g clip-path="url(#${id}-clip)"><path d="${area(ok, zero)}" fill="url(#${id}-ok)"/><path d="${area(stack, ok)}" fill="url(#${id}-bad)"/></g>
+    ${Number.isFinite(state.clock) ? `<line x1="${cut}" x2="${cut}" y1="0" y2="${H}" stroke="var(--ink)" stroke-width="1.5" opacity=".8"/>` : ""}`;
+  $(`#cnt-${key}`).textContent = `${okSum} ok · ${badSum} failed`;
+}
+
+// The 3D scene follows RecoveryPact's real checkout health during a replay.
+function setScene(h) {
+  if (window.rpScene) window.rpScene.setHealth(h);
+}
+function sceneHealthAt(clock) {
+  const { ok, bad } = series(state.data.right);
+  const t = Math.floor(clock);
+  let o = 0, b = 0;
+  for (let i = Math.max(0, t - 2); i <= t && i < ok.length; i++) { o += ok[i]; b += bad[i]; }
+  return o + b ? o / (o + b) : 1;
 }
 
 function play() {
@@ -160,8 +211,9 @@ function play() {
   $("#play").textContent = "■ Stop";
   const tick = (now) => {
     state.clock = ((now - t0) / 1000) * speed;
-    if (state.clock >= end) { state.clock = Infinity; stop(); draw(); return; }
+    if (state.clock >= end) { state.clock = Infinity; stop(); draw(); setScene(1); return; }
     draw();
+    setScene(sceneHealthAt(state.clock));
     state.raf = requestAnimationFrame(tick);
   };
   state.raf = requestAnimationFrame(tick);
@@ -173,17 +225,20 @@ function stop() {
   $("#play").textContent = "▶ Replay both";
 }
 
-$("#play").addEventListener("click", () => (state.playing ? (stop(), (state.clock = Infinity), draw()) : play()));
+$("#play").addEventListener("click", () => {
+  if (state.playing) { stop(); state.clock = Infinity; draw(); setScene(1); } else play();
+});
 $("#tech").addEventListener("change", () => document.querySelectorAll(".feed .tech").forEach((el) => (el.hidden = !$("#tech").checked)));
 
 function renderScoreboard() {
   const ix = state.index;
   const a = ix.aggregate;
   const us = a.pact, arms = Object.keys(a).filter((k) => k !== "pact");
-  const row = (label, key, good) => `<div class="score"><span class="label">${label}</span>
+  const row = (label, key) => `<div class="score glass"><span class="label">${label}</span>
       <div class="row us"><span>RecoveryPact</span><b>${us[key]}</b></div>
       ${arms.map((k) => `<div class="row them"><span>${esc(SIDES[k].name)}</span><b>${a[k][key]}</b></div>`).join("")}</div>`;
   const per = ix.per_scenario || {};
+  const cell = (v) => `<td class="num ${v && v.startsWith("0") ? "zero" : v && v.split("/")[0] === v.split("/")[1] ? "full" : ""}">${esc(v ?? "–")}</td>`;
   $("#scoreboard").innerHTML = `<h2>Across every incident</h2>
     <p class="small">${esc(ix.repeats)} independent repeat(s) of all ${Object.keys(per).length} incidents, ${esc((ix.model || "").replace("nvidia/", ""))}, business records via ${ix.zetaris_mode === "zetaris" ? "live Zetaris" : "local fallback"}. Recomputed from raw traces by the validator.</p>
     <div class="score-grid">
@@ -192,8 +247,8 @@ function renderScoreboard() {
       ${row("Business harm (did what the business ruled out)", "business_harm")}
       ${row("Claimed “fixed” while checkout was still broken", "false_recovery_claims")}
     </div>
-    <div class="table-box"><table><thead><tr><th>Incident</th><th>RecoveryPact</th>${arms.map((k) => `<th>${esc(SIDES[k].name)}</th>`).join("")}</tr></thead><tbody>
-      ${ix.scenarios.map((s) => `<tr><td>${esc(s.title)}</td><td class="num">${esc(per[s.id]?.pact ?? "–")}</td>${arms.map((k) => `<td class="num">${esc(per[s.id]?.[k] ?? "–")}</td>`).join("")}</tr>`).join("")}
+    <div class="table-box glass"><table><thead><tr><th>Incident</th><th>RecoveryPact</th>${arms.map((k) => `<th>${esc(SIDES[k].name)}</th>`).join("")}</tr></thead><tbody>
+      ${ix.scenarios.map((s) => `<tr><td>${esc(s.title)}</td>${cell(per[s.id]?.pact)}${arms.map((k) => cell(per[s.id]?.[k])).join("")}</tr>`).join("")}
     </tbody></table></div>
     <p class="small">Correct out of runs. “${esc(SIDES.pact.name)}” counts are out of ${esc(us.runs)} runs.</p>`;
 }
