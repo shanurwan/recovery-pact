@@ -2,6 +2,11 @@
 
 All injections run inside the dedicated simulation environment against
 local demo roles only — never against arbitrary external databases.
+
+A holder thread opens a session as the scenario's role and application name,
+takes ``FOR UPDATE`` on the hottest SKU's inventory row, and keeps it. Checkout
+traffic then queues behind it and times out, which is the customer-visible
+outage the guardians must resolve.
 """
 
 from __future__ import annotations
@@ -15,26 +20,55 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 
 from app.config import get_settings
+from app.incidents.scenarios import ScenarioSpec, get_spec
 from app.schemas.enums import IncidentScenario
 
 logger = logging.getLogger(__name__)
+
+HOT_SKU = "SKU-WIDGET-01"
+MAX_RESUBMITS = 3
+RESUBMIT_DELAY_S = 2.5
 
 
 @dataclass
 class ActiveIncident:
     incident_id: str
     scenario: IncidentScenario
+    spec: ScenarioSpec
     injected_at: datetime
     blocker_pid: int | None = None
     blocker_role: str | None = None
     blocker_application_name: str | None = None
-    sku: str = "SKU-WIDGET-01"
+    sku: str = HOT_SKU
+    pid_history: list[int] = field(default_factory=list)
+    kills_observed: int = 0
+    resubmits: int = 0
+    settlement_ids: list[str] = field(default_factory=list)
+    holder_outcome: str = "HOLDING"
     metadata: dict[str, Any] = field(default_factory=dict)
     hold_thread: threading.Thread | None = None
-    stop_event: threading.Event | None = None
-    status: str = "ACTIVE"
+    stop_event: threading.Event = field(default_factory=threading.Event)
+    rotate_event: threading.Event = field(default_factory=threading.Event)
+    pid_changed: threading.Condition = field(default_factory=threading.Condition)
+
+    def public(self) -> dict[str, Any]:
+        return {
+            "incident_id": self.incident_id,
+            "scenario": self.scenario.value,
+            "title": self.spec.title,
+            "story": self.spec.story,
+            "injected_at": self.injected_at.isoformat(),
+            "blocker_pid": self.blocker_pid,
+            "blocker_role": self.blocker_role,
+            "blocker_application_name": self.blocker_application_name,
+            "pid_history": list(self.pid_history),
+            "kills_observed": self.kills_observed,
+            "resubmits": self.resubmits,
+            "holder_outcome": self.holder_outcome,
+        }
 
 
 class IncidentInjector:
@@ -51,187 +85,186 @@ class IncidentInjector:
 
     def reset(self) -> dict[str, Any]:
         with self._lock:
-            if self._active and self._active.stop_event:
-                self._active.stop_event.set()
             prev = self._active
             self._active = None
-        if prev and prev.hold_thread:
-            prev.hold_thread.join(timeout=5)
+        if prev:
+            prev.stop_event.set()
+            if prev.hold_thread:
+                prev.hold_thread.join(timeout=8)
         self._cancel_demo_backends()
+        self._close_dangling_settlements()
         return {"ok": True, "message": "incidents reset"}
 
     def inject(self, scenario: IncidentScenario) -> ActiveIncident:
         self.reset()
-        incident_id = f"inc-{uuid.uuid4().hex[:12]}"
-        if scenario in {
-            IncidentScenario.SAFE_AUTONOMOUS,
-            IncidentScenario.STALE_CONTRACT,
-            IncidentScenario.VERIFICATION_FAILS,
-        }:
-            return self._inject_batch_lock(
-                incident_id,
-                scenario,
-                protected=False,
-                keep_holding=scenario == IncidentScenario.VERIFICATION_FAILS,
-            )
-        if scenario == IncidentScenario.PROTECTED_TRANSACTION:
-            return self._inject_batch_lock(incident_id, scenario, protected=True)
-        if scenario == IncidentScenario.BOTH_AGENTS_WRONG:
-            inc = ActiveIncident(
-                incident_id=incident_id,
-                scenario=scenario,
-                injected_at=datetime.now(timezone.utc),
-                metadata={"force_prohibited_proposal": True},
-            )
-            with self._lock:
-                self._active = inc
-            return inc
-        if scenario == IncidentScenario.NEGOTIATION_TIMEOUT:
-            # Inject a lock but mark evidence as contradictory for the orchestrator
-            inc = self._inject_batch_lock(incident_id, scenario, protected=False)
-            inc.metadata["contradictory_evidence"] = True
-            return inc
-        raise ValueError(f"Unsupported scenario: {scenario}")
-
-    def _batch_url(self, role: str, password: str) -> str:
-        base = get_settings().database_url
-        after = base.split("@", 1)[1]
-        return f"postgresql+psycopg://{role}:{password}@{after}"
-
-    def _inject_batch_lock(
-        self,
-        incident_id: str,
-        scenario: IncidentScenario,
-        *,
-        protected: bool,
-        keep_holding: bool = False,
-    ) -> ActiveIncident:
-        role = "settlement_worker" if protected else "batch_worker"
-        app_name = "protected_settlement" if protected else "batch_replayable_inventory"
-        stop_event = threading.Event()
-        ready = threading.Event()
-        pid_box: dict[str, int] = {}
-        error_box: dict[str, str] = {}
-
-        def holder() -> None:
-            engine = create_engine(
-                self._batch_url(role, password=role),
-                connect_args={"options": f"-c application_name={app_name}"},
-            )
-            try:
-                with engine.connect() as conn:
-                    trans = conn.begin()
-                    try:
-                        pid = int(conn.execute(text("SELECT pg_backend_pid()")).scalar_one())
-                        pid_box["pid"] = pid
-                        conn.execute(
-                            text(
-                                "INSERT INTO batch_jobs (job_name, workload_class, status, started_at) "
-                                "VALUES (:name, :cls, 'RUNNING', now())"
-                            ),
-                            {
-                                "name": (
-                                    "settlement_hold" if protected else "inventory_reconcile"
-                                ),
-                                "cls": (
-                                    "PROTECTED_SETTLEMENT" if protected else "BATCH_REPLAYABLE"
-                                ),
-                            },
-                        )
-                        if protected:
-                            conn.execute(
-                                text(
-                                    "INSERT INTO settlement_ledger "
-                                    "(settlement_id, amount_cents, status, protected) "
-                                    "VALUES (:sid, :amt, 'IN_PROGRESS', TRUE)"
-                                ),
-                                {"sid": str(uuid.uuid4()), "amt": 100000},
-                            )
-                        conn.execute(
-                            text(
-                                "SELECT reserved FROM inventory_locks "
-                                "WHERE sku = :sku FOR UPDATE"
-                            ),
-                            {"sku": "SKU-WIDGET-01"},
-                        )
-                        ready.set()
-                        deadline = time.time() + 600
-                        while not stop_event.is_set() and time.time() < deadline:
-                            time.sleep(0.25)
-                        trans.rollback()
-                    except Exception as exc:
-                        error_box["error"] = str(exc)
-                        logger.exception("lock holder failed")
-                        ready.set()
-                        try:
-                            trans.rollback()
-                        except Exception:
-                            pass
-            finally:
-                engine.dispose()
-
-        t = threading.Thread(target=holder, name=f"lock-holder-{incident_id}", daemon=True)
-        t.start()
-        if not ready.wait(timeout=15):
-            raise RuntimeError("Failed to acquire demo lock within timeout")
-        if "error" in error_box and "pid" not in pid_box:
-            raise RuntimeError(f"Lock holder error: {error_box['error']}")
-
+        spec = get_spec(scenario)
         inc = ActiveIncident(
-            incident_id=incident_id,
+            incident_id=f"inc-{uuid.uuid4().hex[:12]}",
             scenario=scenario,
+            spec=spec,
             injected_at=datetime.now(timezone.utc),
-            blocker_pid=pid_box.get("pid"),
-            blocker_role=role,
-            blocker_application_name=app_name,
-            stop_event=stop_event,
-            hold_thread=t,
-            metadata={
-                "protected": protected,
-                "keep_holding": keep_holding,
-                "sku": "SKU-WIDGET-01",
-            },
+            blocker_role=spec.role,
+            blocker_application_name=spec.application_name,
         )
+        ready = threading.Event()
+        t = threading.Thread(
+            target=self._holder_loop,
+            args=(inc, ready),
+            name=f"lock-holder-{inc.incident_id}",
+            daemon=True,
+        )
+        inc.hold_thread = t
+        t.start()
+        if not ready.wait(timeout=15) or inc.blocker_pid is None:
+            inc.stop_event.set()
+            raise RuntimeError(f"Failed to acquire demo lock: {inc.metadata.get('error')}")
         with self._lock:
             self._active = inc
         logger.info(
-            "Injected %s incident %s blocker_pid=%s role=%s",
+            "Injected %s incident %s blocker_pid=%s app=%s",
             scenario.value,
-            incident_id,
+            inc.incident_id,
             inc.blocker_pid,
-            role,
+            spec.application_name,
         )
         return inc
 
-    def invalidate_blocker_identity(self) -> dict[str, Any]:
-        """Scenario C: rotate the blocker session so the contract target PID is stale."""
-        with self._lock:
-            inc = self._active
-            if not inc:
-                raise RuntimeError("No active incident")
-            old_pid = inc.blocker_pid
-            incident_id = inc.incident_id
-            if inc.stop_event:
-                inc.stop_event.set()
-            thread = inc.hold_thread
-        if thread:
-            thread.join(timeout=5)
-        self._cancel_demo_backends()
-        new_inc = self._inject_batch_lock(
-            incident_id,
-            IncidentScenario.STALE_CONTRACT,
-            protected=False,
+    def invalidate_blocker_identity(self, timeout: float = 10.0) -> dict[str, Any]:
+        """Scenario C: the blocker reconnects, so the contract's PID goes stale."""
+        inc = self.active
+        if not inc:
+            raise RuntimeError("No active incident")
+        old_pid = inc.blocker_pid
+        with inc.pid_changed:
+            inc.rotate_event.set()
+            inc.pid_changed.wait_for(
+                lambda: inc.blocker_pid is not None and inc.blocker_pid != old_pid,
+                timeout=timeout,
+            )
+        inc.metadata["stale_pid"] = old_pid
+        inc.metadata["identity_rotated"] = True
+        return {"old_pid": old_pid, "new_pid": inc.blocker_pid}
+
+    # ------------------------------------------------------------------ holder
+
+    def _role_url(self, role: str) -> str:
+        after = get_settings().database_url.split("@", 1)[1]
+        return f"postgresql+psycopg://{role}:{role}@{after}"
+
+    def _holder_loop(self, inc: ActiveIncident, ready: threading.Event) -> None:
+        spec = inc.spec
+        engine = create_engine(
+            self._role_url(spec.role),
+            pool_size=1,
+            max_overflow=1,
+            connect_args={"options": f"-c application_name={spec.application_name}"},
         )
-        new_inc.metadata["stale_pid"] = old_pid
-        new_inc.metadata["identity_rotated"] = True
-        return {"old_pid": old_pid, "new_pid": new_inc.blocker_pid}
+        deadline = time.time() + spec.hold_seconds
+        try:
+            while not inc.stop_event.is_set():
+                result = self._hold_once(engine, inc, ready, deadline)
+                if result == "rotated":
+                    continue
+                if (
+                    result == "killed"
+                    and spec.resubmits_on_kill
+                    and inc.resubmits < MAX_RESUBMITS
+                    and not inc.stop_event.wait(RESUBMIT_DELAY_S)
+                ):
+                    inc.resubmits += 1
+                    logger.info("scheduler resubmitted %s (attempt %s)", spec.application_name, inc.resubmits)
+                    continue
+                break
+        finally:
+            engine.dispose()
+            ready.set()
+
+    def _hold_once(
+        self,
+        engine: Engine,
+        inc: ActiveIncident,
+        ready: threading.Event,
+        deadline: float,
+    ) -> str:
+        spec = inc.spec
+        settlement_id: str | None = None
+        if spec.protected:
+            settlement_id = str(uuid.uuid4())
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO settlement_ledger (settlement_id, amount_cents, status, protected) "
+                        "VALUES (:sid, :amt, 'IN_PROGRESS', TRUE)"
+                    ),
+                    {"sid": settlement_id, "amt": 1_250_000},
+                )
+            inc.settlement_ids.append(settlement_id)
+        try:
+            with engine.connect() as conn:
+                trans = conn.begin()
+                pid = int(conn.execute(text("SELECT pg_backend_pid()")).scalar_one())
+                conn.execute(
+                    text("SELECT reserved FROM inventory_locks WHERE sku = :sku FOR UPDATE"),
+                    {"sku": inc.sku},
+                )
+                with inc.pid_changed:
+                    inc.blocker_pid = pid
+                    inc.pid_history.append(pid)
+                    inc.holder_outcome = "HOLDING"
+                    inc.pid_changed.notify_all()
+                ready.set()
+                while not inc.stop_event.is_set():
+                    if inc.rotate_event.is_set():
+                        inc.rotate_event.clear()
+                        trans.rollback()
+                        # Drop the pooled connection so the job reconnects as a new backend.
+                        conn.invalidate()
+                        return "rotated"
+                    if time.time() >= deadline:
+                        break
+                    # Touch the session so a terminated backend surfaces promptly.
+                    conn.execute(text("SELECT 1"))
+                    time.sleep(0.25)
+                if spec.completes_on_its_own and not inc.stop_event.is_set():
+                    trans.commit()
+                    self._mark_settlement(engine, settlement_id, "COMPLETED")
+                    inc.holder_outcome = "COMPLETED"
+                    return "completed"
+                trans.rollback()
+                inc.holder_outcome = "STOPPED"
+                return "stopped"
+        except Exception as exc:  # noqa: BLE001 — a terminated backend lands here
+            if inc.stop_event.is_set():
+                return "stopped"
+            inc.kills_observed += 1
+            inc.holder_outcome = "KILLED"
+            inc.metadata["error"] = str(exc)[:300]
+            logger.warning("lock holder pid=%s ended: %s", inc.blocker_pid, str(exc)[:120])
+            self._mark_settlement(engine, settlement_id, "ABORTED")
+            ready.set()
+            return "killed"
+
+    @staticmethod
+    def _mark_settlement(engine: Engine, settlement_id: str | None, status: str) -> None:
+        if not settlement_id:
+            return
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE settlement_ledger SET status = :st, finished_at = now() "
+                        "WHERE settlement_id = :sid"
+                    ),
+                    {"st": status, "sid": settlement_id},
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not mark settlement %s %s: %s", settlement_id, status, exc)
 
     def _cancel_demo_backends(self) -> None:
         from app.db.session import get_executor_engine
 
         try:
-            engine = get_executor_engine()
-            with engine.connect() as conn:
+            with get_executor_engine().connect() as conn:
                 conn.execute(
                     text(
                         """
@@ -240,15 +273,26 @@ class IncidentInjector:
                         WHERE datname = current_database()
                           AND pid <> pg_backend_pid()
                           AND usename IN ('batch_worker', 'settlement_worker')
-                          AND application_name IN (
-                            'batch_replayable_inventory', 'protected_settlement'
-                          )
                         """
                     )
                 )
                 conn.commit()
         except Exception as exc:  # noqa: BLE001
             logger.warning("cancel demo backends: %s", exc)
+
+    def _close_dangling_settlements(self) -> None:
+        try:
+            engine = create_engine(self._role_url("settlement_worker"))
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE settlement_ledger SET status = 'RESET', finished_at = now() "
+                        "WHERE status = 'IN_PROGRESS'"
+                    )
+                )
+            engine.dispose()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("close dangling settlements: %s", exc)
 
 
 injector = IncidentInjector()

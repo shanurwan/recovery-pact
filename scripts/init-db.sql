@@ -89,9 +89,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 -- Seed catalog
 INSERT INTO products (sku, name, price_cents, stock) VALUES
-  ('SKU-WIDGET-01', 'Continuity Widget', 2499, 1000),
-  ('SKU-GADGET-02', 'Recovery Gadget', 4999, 500),
-  ('SKU-RELAY-03', 'Pact Relay', 1299, 2000)
+  ('SKU-WIDGET-01', 'Continuity Widget', 2499, 100000000),
+  ('SKU-GADGET-02', 'Recovery Gadget', 4999, 100000000),
+  ('SKU-RELAY-03', 'Pact Relay', 1299, 100000000)
 ON CONFLICT (sku) DO NOTHING;
 
 INSERT INTO inventory_locks (sku, reserved)
@@ -124,5 +124,8 @@ GRANT SELECT, INSERT, UPDATE ON settlement_ledger, inventory_locks, products TO 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO settlement_worker;
 
 -- Mark application_name conventions used by workload classification
+-- Settlement completion and abort markers are written by the settlement role itself.
+GRANT SELECT ON checkout_events TO observer;
+
 COMMENT ON TABLE batch_jobs IS 'Replayable batch workloads; eligible for TERMINATE_BACKEND when allowlisted';
 COMMENT ON TABLE settlement_ledger IS 'Protected financial settlements; NEVER eligible for autonomous termination';

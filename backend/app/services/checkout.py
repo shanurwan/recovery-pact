@@ -40,23 +40,22 @@ def checkout(customer_id: str, sku: str = "SKU-WIDGET-01", qty: int = 1) -> Chec
             session.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_s * 1000)}ms'"))
             session.execute(text("SET LOCAL lock_timeout = '{ms}ms'".format(ms=int(timeout_s * 1000))))
 
-            product = session.execute(
-                text(
-                    "SELECT price_cents, stock FROM products WHERE sku = :sku FOR SHARE"
-                ),
-                {"sku": sku},
-            ).one()
-            price_cents, stock = product
-            if stock < qty:
-                raise ValueError("insufficient stock")
-
-            # Row lock on inventory_locks — blocked when batch holds FOR UPDATE
+            # Row lock on inventory_locks first: the single serialization point,
+            # blocked when a batch holds FOR UPDATE. Taking it before touching
+            # products keeps queued checkouts from deadlocking once it frees.
             session.execute(
                 text(
                     "SELECT reserved FROM inventory_locks WHERE sku = :sku FOR UPDATE"
                 ),
                 {"sku": sku},
             )
+            product = session.execute(
+                text("SELECT price_cents, stock FROM products WHERE sku = :sku"),
+                {"sku": sku},
+            ).one()
+            price_cents, stock = product
+            if stock < qty:
+                raise ValueError("insufficient stock")
             session.execute(
                 text(
                     "UPDATE inventory_locks SET reserved = reserved + :qty, updated_at = now() WHERE sku = :sku"

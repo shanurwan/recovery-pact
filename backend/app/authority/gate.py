@@ -27,7 +27,13 @@ logger = logging.getLogger(__name__)
 # Explicit allowlist — nothing else may execute.
 ALLOWLISTED_ACTIONS = {RemediationActionType.TERMINATE_BACKEND}
 ALLOWLISTED_ROLES = {"batch_worker"}
-ALLOWLISTED_APP_NAMES = {"batch_replayable_inventory"}
+# Static, technical policy: replayable batch jobs by naming convention. It does
+# not know about change calendars or financial close; that is business context.
+ALLOWLISTED_APP_NAMES = {
+    "batch_replayable_inventory",
+    "batch_replayable_price_sync",
+    "batch_replayable_month_end_close",
+}
 PROHIBITED_ROLES = {"settlement_worker", "checkout", "postgres", "observer", "remediator"}
 PROHIBITED_APP_NAMES = {"protected_settlement", "checkout_api"}
 

@@ -5,13 +5,14 @@ Never accepts arbitrary model-generated SQL for privileged operations.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
 
-from app.authority.gate import AuthzDecision, authority_gate
+from app.authority.gate import ALLOWLISTED_APP_NAMES, ALLOWLISTED_ROLES, AuthzDecision, authority_gate
 from app.db.session import get_executor_engine, session_scope
 from app.schemas.contract import RecoveryContract
 from app.schemas.enums import RemediationActionType
@@ -82,14 +83,14 @@ class RestrictedExecutor:
                     "started_at": started.isoformat(),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
-            if live["usename"] != "batch_worker":
+            if live["usename"] not in ALLOWLISTED_ROLES:
                 return {
                     "executed": False,
                     "error": f"Refusing to terminate usename={live['usename']}",
                     "started_at": started.isoformat(),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
-            if live["application_name"] != "batch_replayable_inventory":
+            if live["application_name"] not in ALLOWLISTED_APP_NAMES:
                 return {
                     "executed": False,
                     "error": f"Refusing to terminate app={live['application_name']}",
@@ -106,13 +107,12 @@ class RestrictedExecutor:
                 text(
                     """
                     INSERT INTO audit_log (actor, action, details)
-                    VALUES ('restricted_executor', 'TERMINATE_BACKEND', :details::jsonb)
+                    VALUES ('restricted_executor', 'TERMINATE_BACKEND', CAST(:details AS jsonb))
                     """
                 ),
                 {
-                    "details": (
-                        f'{{"pid": {pid}, "contract_id": "{contract.contract_id}", '
-                        f'"result": {str(bool(ok)).lower()}}}'
+                    "details": json.dumps(
+                        {"pid": pid, "contract_id": contract.contract_id, "result": bool(ok)}
                     )
                 },
             )
