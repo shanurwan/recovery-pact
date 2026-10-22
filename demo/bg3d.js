@@ -134,15 +134,18 @@
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    const wide = w / h > 1.15 && w > 900;
-    // Put the core near 77% of the screen width on wide screens, out of the text column.
-    const halfW = Math.tan((camera.fov * Math.PI) / 360) * camera.position.z * camera.aspect;
-    world.position.set(wide ? halfW * 0.54 : 0, wide ? 0.6 : -3.2, 0);
-    world.scale.setScalar(wide ? 1 : 0.85);
-    canvas.style.opacity = wide ? "1" : "0.55";
+    // Centred behind the whole page; slightly smaller on portrait screens.
+    world.position.set(0, 0, 0);
+    world.scale.setScalar(w / h > 1 ? 1.75 : 1.1);
   }
   window.addEventListener("resize", resize);
   resize();
+
+  let scrollT = 0;
+  window.addEventListener("scroll", () => {
+    const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+    scrollT = window.scrollY / max;
+  }, { passive: true });
 
   let mx = 0, my = 0;
   window.addEventListener("pointermove", (e) => {
@@ -196,6 +199,8 @@
     bBiz.position.set(Math.cos(b) * 2.75, Math.sin(b) * 2.75 * Math.cos(1.75), Math.sin(b) * 2.75 * Math.sin(1.75));
     camera.position.x += (mx * 1.2 - camera.position.x) * dt * 0.8;
     camera.position.y += (1.2 - my * 0.8 - camera.position.y) * dt * 0.8;
+    world.rotation.y += ((scrollT * Math.PI * 1.2) - world.rotation.y) * dt * 1.5;
+    world.rotation.x += ((scrollT * 0.5) - world.rotation.x) * dt * 1.5;
     camera.lookAt(0, 0, 0);
   }
 
