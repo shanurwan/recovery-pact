@@ -84,7 +84,7 @@ def checkout_series(seconds: int = 120) -> list[dict[str, Any]]:
         rows = session.execute(
             text(
                 """
-                SELECT extract(epoch FROM date_trunc('second', created_at))::bigint AS t,
+                SELECT extract(epoch FROM date_trunc('second', created_at))::bigint AS sec,
                        count(*) FILTER (WHERE outcome = 'SUCCESS') AS ok,
                        count(*) FILTER (WHERE outcome <> 'SUCCESS') AS bad
                 FROM checkout_events
@@ -94,7 +94,7 @@ def checkout_series(seconds: int = 120) -> list[dict[str, Any]]:
             ),
             {"s": seconds},
         ).all()
-    return [{"t": int(r.t), "ok": int(r.ok), "bad": int(r.bad)} for r in rows]
+    return [{"t": int(r.sec), "ok": int(r.ok), "bad": int(r.bad)} for r in rows]
 
 
 @app.get("/api/scenarios")
@@ -187,6 +187,7 @@ def memory_clear() -> dict[str, Any]:
     if run_store.busy.locked():
         raise HTTPException(409, "a run is in progress")
     get_hmem().clear()
+    run_store.memory_cleared()
     return {"ok": True}
 
 

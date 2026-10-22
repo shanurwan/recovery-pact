@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 from app.agents.auditor import RECOVERY_AUDITOR, audit
 from app.agents.guardians import (
@@ -73,6 +74,7 @@ from app.verification.verifier import verify_business, verify_db_only, wait_for_
 logger = logging.getLogger(__name__)
 
 ACCEPTING = (ChallengeDecision.ACCEPT, ChallengeDecision.CONDITIONAL_ACCEPT)
+RUN_LOCK_KEY = 74202026  # pg advisory lock: one incident per database at a time
 
 
 def utcnow() -> datetime:
@@ -86,6 +88,10 @@ class PactRun:
     arch: Architecture
     use_memory: bool
     interactive: bool
+    # Which recorded sequence this run corresponds to: "main" (first time this
+    # incident is seen since memory was cleared) or "encore" (seen before).
+    # Keys recordings deterministically, independent of what recall returns.
+    slot: str = "main"
     started_at: datetime = field(default_factory=utcnow)
     finished_at: datetime | None = None
     status: str = "running"  # running | awaiting_human | done | error
@@ -121,6 +127,7 @@ class PactRun:
             "title": get_spec(self.scenario).title,
             "arch": self.arch.value,
             "use_memory": self.use_memory,
+            "slot": self.slot,
             "status": self.status,
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
@@ -147,6 +154,7 @@ def _jsonable(obj: Any) -> Any:
 class RunStore:
     def __init__(self) -> None:
         self._runs: dict[str, PactRun] = {}
+        self._seen: dict[tuple[IncidentScenario, Architecture], int] = {}
         self._lock = threading.Lock()
         self.busy = threading.Lock()
 
@@ -159,6 +167,15 @@ class RunStore:
 
     def list(self) -> list[PactRun]:
         return sorted(self._runs.values(), key=lambda r: r.started_at, reverse=True)
+
+    def next_slot(self, scenario: IncidentScenario, arch: Architecture) -> str:
+        """main the first time an incident is seen since memory was cleared, then encore."""
+        seen = self._seen.get((scenario, arch), 0)
+        self._seen[(scenario, arch)] = seen + 1
+        return "main" if seen == 0 else "encore"
+
+    def memory_cleared(self) -> None:
+        self._seen.clear()
 
     def persist(self, run: PactRun) -> None:
         d = Path(get_settings().runs_dir)
@@ -188,9 +205,31 @@ class Orchestrator:
         self.rounds = 0
         self.requested_by_cg: set[str] = set()
         self.contract_versions = 0
+        self.negotiations = 0
+        self._probed: set[tuple[int, int, str]] = set()
         self.t0 = time.time()
 
     # ------------------------------------------------------------- lifecycle
+
+    def _acquire_run_lock(self) -> bool:
+        """One incident at a time per database, across processes (console, harness, tests).
+
+        Two runs injecting into the same database destroy each other's incidents
+        and produce meaningless results, so a second run refuses to start.
+        """
+        engine = create_engine(self.settings.observer_database_url, poolclass=NullPool)
+        conn = engine.connect()
+        if conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": RUN_LOCK_KEY}).scalar():
+            self._lock_conn = conn
+            return True
+        conn.close()
+        return False
+
+    def _release_run_lock(self) -> None:
+        conn = getattr(self, "_lock_conn", None)
+        if conn is not None:
+            conn.close()  # closing the session releases the advisory lock
+            self._lock_conn = None
 
     def execute(self) -> None:
         run = self.run
@@ -198,6 +237,14 @@ class Orchestrator:
         run.model = client.model_id
         run.inference_mode = client.mode
         run.zetaris_mode = get_business_context().mode
+        if not self._acquire_run_lock():
+            run.emit("error", "orchestrator", "Another RecoveryPact run is active on this database; refusing to start")
+            run.status = "error"
+            run.result = {"outcome": "NOT_RUN", "error": "run lock held by another process"}
+            run.finished_at = utcnow()
+            with run._cond:
+                run._cond.notify_all()
+            return  # never reset: the incident belongs to the other run
         try:
             self._observe()
             if run.arch == Architecture.PACT:
@@ -211,6 +258,7 @@ class Orchestrator:
         finally:
             if run.status != "awaiting_human":
                 self._close()
+            self._release_run_lock()
 
     def _close(self) -> None:
         injector.reset()
@@ -328,9 +376,8 @@ class Orchestrator:
         )
 
     def _call_prefix(self) -> str:
-        mem = "warm" if self.recalled else "cold"
-        renego = f"-v{self.contract_versions + 1}" if self.contract_versions else ""
-        return f"{self.run.scenario.value}/{self.run.arch.value}/{mem}{renego}"
+        renego = f"-n{self.negotiations}" if self.negotiations > 1 else ""
+        return f"{self.run.scenario.value}/{self.run.arch.value}/{self.run.slot}{renego}"
 
     def _account(self, rec: TurnRecord) -> None:
         self.model_calls += len(rec.metrics)
@@ -346,11 +393,15 @@ class Orchestrator:
             probes = [p for p in probes if p != "biz.tradeoff"] + ["biz.workload_registry", "biz.impact"]
         for p in dict.fromkeys(probes):
             latest = self.run.ledger.latest(p)
-            # Business facts don't change mid-incident; live probes are fresh for 10s.
+            # Business facts don't change mid-incident. Live probes run at most once
+            # per round. Rounds, not seconds: replay must take the same path as the
+            # recorded run even though replayed model calls take no time.
             if latest and (p.startswith("biz.") and p != "biz.impact"):
                 continue
-            if latest and (utcnow() - latest.collected_at).total_seconds() < 10:
+            key = (self.negotiations, self.rounds, p)
+            if key in self._probed:
                 continue
+            self._probed.add(key)
             ev = run_probe(self.run.ledger, p, apps, requested_by)
             if ev:
                 ran = True
@@ -372,6 +423,7 @@ class Orchestrator:
 
     def _negotiate(self) -> dict[str, Any]:
         run = self.run
+        self.negotiations += 1
         max_rounds = self.settings.negotiation_max_rounds
         proposal: Proposal | None = None
         review: Review | None = None
@@ -593,7 +645,7 @@ class Orchestrator:
             # (a forged or prohibited target) is denied, never renegotiated.
             failed = {c["name"] for c in decision.checks if not c["passed"]}
             stale = failed == {"live_identity"}
-            if stale and run.arch == Architecture.PACT and self.contract_versions < 2:
+            if stale and run.arch == Architecture.PACT and self.negotiations < 2:
                 run.emit("renegotiate", "pact", "Contract denied as stale; re-observing and renegotiating once")
                 lock = probe_lock_graph(run.ledger)
                 run.emit("evidence", "observer", lock.summary, evidence=lock)
@@ -797,7 +849,13 @@ class Orchestrator:
                      + ("recovered" if truth["verified"] else "NOT recovered"), verification=truth)
         verified_truth = truth["verified"] if truth else (outcome == Outcome.VERIFIED_RECOVERED)
         claimed = extra.get("claimed_recovered", outcome == Outcome.VERIFIED_RECOVERED)
+        try:
+            continuity = self._continuity_cost()
+        except Exception as exc:  # noqa: BLE001 — metrics never break a run
+            logger.warning("continuity cost unavailable: %s", exc)
+            continuity = {}
         run.result = {
+            **continuity,
             "outcome": outcome.value,
             "expected_outcome": self.spec.expected_outcome,
             "correct": outcome.value == self.spec.expected_outcome and not unsafe and not harmful
@@ -825,6 +883,28 @@ class Orchestrator:
             run.status = "awaiting_human"
             run_store.persist(run)
 
+    def _continuity_cost(self) -> dict[str, Any]:
+        """What the incident cost the business so far: lost orders and harmed settlements."""
+        since = self.run.incident.injected_at if self.run.incident else self.run.started_at
+        with create_engine(self.settings.observer_database_url).connect() as conn:
+            lost, price = conn.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE outcome <> 'SUCCESS'), "
+                    "(SELECT price_cents FROM products WHERE sku = 'SKU-WIDGET-01') "
+                    "FROM checkout_events WHERE created_at >= :since"
+                ),
+                {"since": since},
+            ).one()
+            aborted = conn.execute(
+                text("SELECT count(*) FROM settlement_ledger WHERE started_at >= :since AND status = 'ABORTED'"),
+                {"since": since},
+            ).scalar_one()
+        return {
+            "lost_checkouts": int(lost),
+            "revenue_lost_usd": round(int(lost) * (price or 0) / 100, 2),
+            "settlements_aborted": int(aborted),
+        }
+
     def _trace(self, limit: int = 7000) -> str:
         lines = []
         for e in self.run.events:
@@ -850,7 +930,7 @@ class Orchestrator:
         run = self.run
         app = (blocker_app_names(run.ledger.latest("db.lock_graph")) or ["unknown"])[0]
         job = (self._registry_record(app) or {}).get("job_name", "")
-        rep, metrics = audit(self._trace(), [app, job], f"{self._call_prefix()}/auditor")
+        rep, metrics = audit(self._trace(), [app, job], f"{self.run.scenario.value}/{self.run.arch.value}/{self.run.slot}/auditor")
         self.model_calls += len(metrics)
         for m in metrics:
             self.tokens += int(m.get("prompt_tokens") or 0) + int(m.get("completion_tokens") or 0)
@@ -949,6 +1029,9 @@ class Orchestrator:
 
     def human_decision(self, approve: bool, candidate_id: str | None, note: str = "") -> None:
         run = self.run
+        if not self._acquire_run_lock():
+            run.emit("error", "orchestrator", "Another run is active on this database; decision not applied")
+            return
         try:
             if not approve:
                 run.emit("human", "human", f"Human declined automated action. {note}".strip())
@@ -973,6 +1056,7 @@ class Orchestrator:
             if run.status == "awaiting_human":
                 run.status = "running"
             self._close()
+            self._release_run_lock()
 
 
 def start_run(scenario: IncidentScenario, arch: Architecture, use_memory: bool = True, interactive: bool = True) -> PactRun:
@@ -984,6 +1068,7 @@ def start_run(scenario: IncidentScenario, arch: Architecture, use_memory: bool =
         arch=arch,
         use_memory=use_memory,
         interactive=interactive,
+        slot=run_store.next_slot(scenario, arch),
     )
     run_store.put(run)
     orch = Orchestrator(run)
@@ -999,7 +1084,7 @@ def start_run(scenario: IncidentScenario, arch: Architecture, use_memory: bool =
     return run
 
 
-def run_blocking(scenario: IncidentScenario, arch: Architecture, use_memory: bool = True) -> PactRun:
+def run_blocking(scenario: IncidentScenario, arch: Architecture, use_memory: bool = True, slot: str = "main") -> PactRun:
     """Used by the eval harness: non-interactive, returns when done."""
     with run_store.busy:
         run = PactRun(
@@ -1008,6 +1093,7 @@ def run_blocking(scenario: IncidentScenario, arch: Architecture, use_memory: boo
             arch=arch,
             use_memory=use_memory,
             interactive=False,
+            slot=slot,
         )
         run_store.put(run)
         Orchestrator(run).execute()

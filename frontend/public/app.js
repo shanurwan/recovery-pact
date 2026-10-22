@@ -325,6 +325,8 @@ async function loadReceipt(runId) {
       <dl class="kv">
         <dt>Action</dt><dd>${esc(act.kind || "–")}${act.target ? ` → ${esc(act.target.application_name)} (pid ${esc(act.target.pid)})` : ""}${act.executed === false ? " (not executed)" : ""}</dd>
         <dt>Time</dt><dd>${esc(r.duration_s)} s</dd>
+        <dt>Lost checkouts</dt><dd>${esc(r.lost_checkouts ?? "–")}${r.revenue_lost_usd != null ? ` (~$${esc(Number(r.revenue_lost_usd).toLocaleString())})` : ""}</dd>
+        <dt>Settlements aborted</dt><dd>${esc(r.settlements_aborted ?? "–")}</dd>
         <dt>Rounds</dt><dd>${esc(r.rounds)}</dd>
         <dt>Model calls</dt><dd>${esc(r.model_calls)} (${esc(run.model)} · ${esc(run.inference_mode)})</dd>
         <dt>Business data</dt><dd>${esc(run.zetaris_mode)}</dd>

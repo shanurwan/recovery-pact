@@ -1,0 +1,41 @@
+name: deploy demo
+
+# Publishes demo/ (the public replay page) to Cloudflare Pages.
+# Needs repository secrets CLOUDFLARE_API_TOKEN (permission: Cloudflare Pages, Edit)
+# and CLOUDFLARE_ACCOUNT_ID. The custom domain is attached once in the Cloudflare
+# dashboard: Workers & Pages > recovery-pact > Custom domains (recovery-pact.wnswaz.win).
+on:
+  push:
+    branches: [main]
+    paths: ["demo/**", ".github/workflows/deploy-demo.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the replay data is present
+        run: |
+          test -f demo/data/index.json || { echo "demo/data/index.json missing: run python -m app.evals.build_demo"; exit 1; }
+          node --check demo/app.js
+      - name: Skip when Cloudflare is not configured
+        if: env.HAS_TOKEN != 'true'
+        run: echo "::notice::CLOUDFLARE_API_TOKEN not set; demo built but not deployed."
+      - name: Deploy to Cloudflare Pages
+        if: env.HAS_TOKEN == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          preCommands: npx wrangler pages project create recovery-pact --production-branch=main || true
+          command: pages deploy demo --project-name=recovery-pact --branch=main --commit-dirty=true

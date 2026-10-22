@@ -1,0 +1,56 @@
+name: reproduce benchmark
+
+# Proves the published benchmark reproduces on a clean machine with no secrets:
+# starts the full stack, replays the recorded Nemotron decisions against a live
+# PostgreSQL with real lock contention and real checkout traffic, then validates
+# every number from the raw traces. Business context uses the labeled local
+# fallback here (the Zetaris platform image is not public).
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**", "recordings/**", "scripts/**", "seed/**", "compose.yaml", "tests/**", ".github/workflows/reproduce.yml"]
+  workflow_dispatch:
+
+jobs:
+  replay-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recordings present?
+        id: rec
+        run: |
+          if [ -n "$(find recordings -name '*.json' -print -quit 2>/dev/null)" ]; then echo "ok=true" >> "$GITHUB_OUTPUT";
+          else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::notice::No replay recordings committed yet; skipping the replay benchmark."; fi
+      - name: Start the stack (no .env, no keys)
+        if: steps.rec.outputs.ok == 'true'
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 60); do
+            docker compose exec -T api python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')" && break
+            sleep 3
+          done
+      - name: Unit tests inside the stack
+        if: steps.rec.outputs.ok == 'true'
+        run: docker compose exec -T -w /app api python -m pytest -q tests
+      - name: Replay benchmark, then independent validation
+        if: steps.rec.outputs.ok == 'true'
+        env:
+          LABEL: ci-replay
+          INFERENCE_MODE: replay
+        run: bash scripts/benchmark.sh
+      - name: Same decisions as the published benchmark
+        if: steps.rec.outputs.ok == 'true'
+        run: docker compose exec -T api python -m app.evals.compare evals/results/ci-replay evals/results/ultra-benchmark --repeat 3
+      - name: Summary
+        if: always()
+        run: |
+          test -f evals/results/ci-replay/summary.md && cat evals/results/ci-replay/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-replay-results
+          path: evals/results/ci-replay
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 200 api

@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.config import get_settings
+from app.evals.manifest import build_manifest
+from app.evals.validate import validate
 from app.incidents.scenarios import SCENARIOS
 from app.integrations.nemotron.client import get_inference_client
 from app.integrations.zetaris.business import get_business_context
@@ -56,6 +57,9 @@ def _row(run, phase: str) -> dict[str, Any]:
         "tokens": r.get("tokens"),
         "duration_s": r.get("duration_s"),
         "recalled_memories": r.get("recalled_memories"),
+        "lost_checkouts": r.get("lost_checkouts"),
+        "settlements_aborted": r.get("settlements_aborted"),
+        "repeat": getattr(run, "repeat", 1),
     }
 
 
@@ -75,6 +79,8 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "median_duration_s": statistics.median(r["duration_s"] or 0 for r in rs),
             "model_calls": sum(r["model_calls"] or 0 for r in rs),
             "tokens": sum(r["tokens"] or 0 for r in rs),
+            "lost_checkouts": sum(r["lost_checkouts"] or 0 for r in rs),
+            "settlements_aborted": sum(r["settlements_aborted"] or 0 for r in rs),
         }
     return out
 
@@ -88,27 +94,33 @@ def _markdown(summary: dict[str, Any]) -> str:
         "",
         "## Architectures",
         "",
-        "| Arm | Correct | Unsafe actions | Business harm | False recovery claims | Verified recoveries | Median time (s) | Model calls |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Arm | Correct | Unsafe actions | Business harm | False recovery claims | Settlements aborted | Verified recoveries | Lost checkouts | Median time (s) | Model calls |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for arch, a in summary["aggregate"].items():
         lines.append(
             f"| {arch} | {a['correct']}/{a['runs']} | {a['unsafe_actions']} | {a['business_harm']} | "
-            f"{a['false_recovery_claims']} | {a['verified_recoveries']} | {a['median_duration_s']} | {a['model_calls']} |"
+            f"{a['false_recovery_claims']} | {a['settlements_aborted']} | {a['verified_recoveries']} | "
+            f"{a['lost_checkouts']} | {a['median_duration_s']} | {a['model_calls']} |"
         )
+    if summary.get("per_scenario"):
+        lines += ["", "## Pass rate per scenario", "", "| Scenario | " + " | ".join(summary["aggregate"]) + " |",
+                  "|---|" + "---|" * len(summary["aggregate"])]
+        for sc, by_arch in summary["per_scenario"].items():
+            lines.append(f"| {sc} | " + " | ".join(by_arch.get(a, "-") for a in summary["aggregate"]) + " |")
     lines += [
         "",
         "## Every run",
         "",
-        "| Phase | Arm | Scenario | Outcome (expected) | Action | Unsafe | Harm | False claim | Rounds | Calls | Time (s) | Memories |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Rep | Phase | Arm | Scenario | Outcome (expected) | Action | Unsafe | Harm | False claim | Lost checkouts | Rounds | Calls | Time (s) | Memories |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in summary["runs"]:
         mark = "ok" if r["correct"] else "WRONG"
         lines.append(
-            f"| {r['phase']} | {r['arch']} | {r['scenario']} | {r['outcome']} ({r['expected']}) {mark} | "
+            f"| {r['repeat']} | {r['phase']} | {r['arch']} | {r['scenario']} | {r['outcome']} ({r['expected']}) {mark} | "
             f"{r['action']}{'' if r['executed'] else ' (not run)'} | {_yn(r['unsafe_action'])} | "
-            f"{_yn(r['business_harm'])} | {_yn(r['false_recovery_claim'])} | {r['rounds']} | "
+            f"{_yn(r['business_harm'])} | {_yn(r['false_recovery_claim'])} | {r['lost_checkouts']} | {r['rounds']} | "
             f"{r['model_calls']} | {r['duration_s']} | {r['recalled_memories']} |"
         )
     if summary.get("encores"):
@@ -129,14 +141,13 @@ def main() -> None:
     ap.add_argument("--scenarios", default="all")
     ap.add_argument("--no-encores", action="store_true")
     ap.add_argument("--keep-memory", action="store_true")
+    ap.add_argument("--repeats", type=int, default=1)
     args = ap.parse_args()
 
     arms = [Architecture(a.strip()) for a in args.arms.split(",")]
     scenarios = _scenarios(args.scenarios)
     out_dir = Path("evals/results") / args.label
     (out_dir / "runs").mkdir(parents=True, exist_ok=True)
-    if not args.keep_memory:
-        get_hmem().clear()
 
     client = get_inference_client()
     summary: dict[str, Any] = {
@@ -145,12 +156,19 @@ def main() -> None:
         "inference_mode": client.mode,
         "zetaris_mode": get_business_context().mode,
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "manifest": build_manifest(),
         "runs": [],
     }
     rows: list[dict[str, Any]] = []
 
-    def record(run, phase: str) -> dict[str, Any]:
-        (out_dir / "runs" / f"{phase}-{run.arch.value}-{run.scenario.value}.json").write_text(
+    def record(run, phase: str, rep: int) -> dict[str, Any]:
+        if run.result.get("outcome") == "NOT_RUN":
+            raise SystemExit(
+                "Another RecoveryPact run holds the database (console or another harness). "
+                "Stop it and rerun; results from overlapping runs would be meaningless."
+            )
+        run.repeat = rep
+        (out_dir / "runs" / f"r{rep}-{phase}-{run.arch.value}-{run.scenario.value}.json").write_text(
             json.dumps(run.to_json(), indent=2), encoding="utf-8"
         )
         row = _row(run, phase)
@@ -164,30 +182,49 @@ def main() -> None:
         time.sleep(3)  # let checkout traffic settle between incidents
         return row
 
-    for arch in arms:
-        for sc in scenarios:
-            record(run_blocking(sc, arch, use_memory=arch == Architecture.PACT), "main")
-
     encores = []
-    if Architecture.PACT in arms and not args.no_encores:
-        for sc in ENCORES:
-            if sc not in scenarios:
-                continue
-            first = next(r for r in rows if r["arch"] == "pact" and r["scenario"] == sc.value)
-            again = record(run_blocking(sc, Architecture.PACT, use_memory=True), "encore")
-            encores.append(
-                f"{sc.value}: first {first['outcome']} in {first['rounds']} round(s), {first['model_calls']} calls, "
-                f"{first['duration_s']}s -> with memory {again['outcome']} in {again['rounds']} round(s), "
-                f"{again['model_calls']} calls, {again['duration_s']}s ({again['recalled_memories']} memories recalled)"
-            )
+    for rep in range(1, args.repeats + 1):
+        # Each repeat starts from empty memory, so repeats are independent samples.
+        if not args.keep_memory:
+            get_hmem().clear()
+        for arch in arms:
+            for sc in scenarios:
+                record(run_blocking(sc, arch, use_memory=arch == Architecture.PACT, slot="main"), "main", rep)
+        if Architecture.PACT in arms and not args.no_encores:
+            for sc in ENCORES:
+                if sc not in scenarios:
+                    continue
+                first = next(r for r in rows if r["arch"] == "pact" and r["scenario"] == sc.value and r["repeat"] == rep)
+                again = record(run_blocking(sc, Architecture.PACT, use_memory=True, slot="encore"), "encore", rep)
+                encores.append(
+                    f"rep {rep} {sc.value}: first {first['outcome']} ({first['action']}"
+                    f"{'' if first['executed'] else ', not run'}) in {first['rounds']} round(s), {first['model_calls']} calls, "
+                    f"{first['duration_s']}s, {first['lost_checkouts']} lost checkouts -> with memory {again['outcome']} "
+                    f"({again['action']}{'' if again['executed'] else ', not run'}) in {again['rounds']} round(s), "
+                    f"{again['model_calls']} calls, {again['duration_s']}s, {again['lost_checkouts']} lost checkouts "
+                    f"({again['recalled_memories']} memories recalled)"
+                )
 
     summary["runs"] = rows
+    summary["repeats"] = args.repeats
     summary["aggregate"] = _aggregate(rows)
+    per: dict[str, dict[str, str]] = {}
+    for sc in scenarios:
+        for arch in arms:
+            rs = [r for r in rows if r["phase"] == "main" and r["scenario"] == sc.value and r["arch"] == arch.value]
+            if rs:
+                per.setdefault(sc.value, {})[arch.value] = f"{sum(1 for r in rs if r['correct'])}/{len(rs)}"
+    summary["per_scenario"] = per
     summary["encores"] = encores
     summary["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (out_dir / "summary.md").write_text(_markdown(summary), encoding="utf-8")
     print(_markdown(summary))
+    rep = validate(out_dir)
+    print(("VALID" if not rep.errors else "INVALID") + f": {rep.checks - len(rep.errors)}/{rep.checks} checks passed")
+    for e in rep.errors[:20]:
+        print(f"  - {e}")
+    raise SystemExit(1 if rep.errors else 0)
 
 
 if __name__ == "__main__":

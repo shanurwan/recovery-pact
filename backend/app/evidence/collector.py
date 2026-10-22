@@ -49,13 +49,16 @@ class EvidenceLedger:
 
     def __init__(self) -> None:
         self._items: dict[str, Evidence] = {}
-        self._n = 0
+        self._n: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def add(self, **kwargs: Any) -> Evidence:
+        # One counter per source: whether memory recalls something must not shift
+        # the ids of database or business evidence (replay cites them by id).
         with self._lock:
-            self._n += 1
-            eid = f"{self.PREFIX[kwargs['source']]}-{self._n}"
+            prefix = self.PREFIX[kwargs["source"]]
+            self._n[prefix] = self._n.get(prefix, 0) + 1
+            eid = f"{prefix}-{self._n[prefix]}"
             ev = Evidence(evidence_id=eid, **kwargs)
             self._items[eid] = ev
             return ev

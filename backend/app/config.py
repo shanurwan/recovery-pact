@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # --- Inference: NVIDIA Nemotron (OpenAI-compatible NIM API) ---
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nemotron_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
+    nemotron_model: str = "nvidia/nemotron-3-ultra-550b-a55b"
     nemotron_thinking: bool = False
     # nemotron: live calls (recorded). replay: recorded Nemotron responses.
     inference_mode: str = "nemotron"
