@@ -10,7 +10,9 @@ Zetaris joins them in one SQL statement per question. Without it the Continuity
 Guardian cannot tell a replayable batch from a settlement, or know the close is
 running. When Zetaris is disabled or unreachable, the same questions are answered
 locally from the same sources and every result is labeled
-``local_federation_fallback`` so nobody mistakes it for the sponsor path.
+``local_federation_fallback`` so nobody mistakes it for the sponsor path. With
+BUSINESS_FALLBACK=false a failed question is ``business_unavailable`` instead: no
+records, and the pact treats the answer as unknown, never as "nothing found".
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ _SAFE_IDENT = re.compile(r"^[a-z0-9_]+$")
 
 @dataclass
 class BusinessAnswer:
-    source: str  # "zetaris" | "local_federation_fallback"
+    source: str  # "zetaris" | "local_federation_fallback" | "business_unavailable"
     records: list[dict[str, Any]]
     query: str
     latency_ms: float
@@ -66,6 +68,8 @@ class BusinessContext:
         self.shop = s.zetaris_shop_ds
         self.cal = s.zetaris_calendar_db
         self.csv_path = Path(s.change_calendar_csv)
+        self.fallback = s.business_fallback
+        self.outage = {q.strip() for q in s.business_outage.split(",") if q.strip()}
 
     @property
     def mode(self) -> str:
@@ -82,7 +86,7 @@ class BusinessContext:
             f"LEFT JOIN {self.ds}.escalation_contacts e ON e.owner_team = w.owner_team "
             f"WHERE w.application_name IN {_in_list(application_names)}"
         )
-        return self._ask(sql, lambda: self._local_registry(application_names))
+        return self._ask(sql, lambda: self._local_registry(application_names), "registry")
 
     def change_calendar(self, application_names: list[str]) -> BusinessAnswer:
         # Federated join: CSV change calendar x PostgreSQL workload registry.
@@ -96,7 +100,7 @@ class BusinessContext:
             f"AND current_timestamp() BETWEEN to_timestamp(c.window_start, \"{fmt}\") "
             f"AND to_timestamp(c.window_end, \"{fmt}\")"
         )
-        return self._ask(sql, lambda: self._local_calendar(application_names))
+        return self._ask(sql, lambda: self._local_calendar(application_names), "calendar")
 
     def impact(self, window_seconds: int = 30) -> BusinessAnswer:
         # Federated join: checkout event stream (shop) x SLO table (continuity).
@@ -110,16 +114,21 @@ class BusinessContext:
             f"WHERE created_at > current_timestamp() - INTERVAL {int(window_seconds)} SECONDS) t "
             "WHERE s.service = 'checkout'"
         )
-        return self._ask(sql, lambda: self._local_impact(window_seconds))
+        return self._ask(sql, lambda: self._local_impact(window_seconds), "impact")
 
     # ------------------------------------------------------------- plumbing
 
-    def _ask(self, sql: str, fallback) -> BusinessAnswer:
+    def _ask(self, sql: str, fallback, question: str) -> BusinessAnswer:
         if self.zetaris_enabled:
             try:
+                if question in self.outage or "all" in self.outage:
+                    raise ZetarisError(f"injected outage: Zetaris unreachable for the {question} question")
                 res = get_zetaris_client().query(sql)
                 return BusinessAnswer("zetaris", _normalize(res.records()), sql, res.latency_ms)
             except (ZetarisError, Exception) as exc:  # noqa: BLE001
+                if not self.fallback:
+                    logger.warning("zetaris query failed, business context unavailable: %s", exc)
+                    return BusinessAnswer("business_unavailable", [], sql, 0.0, notes=[f"zetaris_error: {str(exc)[:200]}"])
                 logger.warning("zetaris query failed, using labeled fallback: %s", exc)
                 ans = self._fallback(sql, fallback)
                 ans.notes.append(f"zetaris_error: {str(exc)[:200]}")

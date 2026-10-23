@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -129,13 +130,26 @@ class InferenceClient:
     ) -> tuple[str, dict[str, Any]]:
         if self.mode == "replay":
             return self._replay(call_key, model)
-        if self.provider == "meterless":
+        direct = {m.strip() for m in self.settings.meterless_direct_models.split(",") if m.strip()}
+        to_nim = model in direct or call_key.startswith("guard/")
+        provider = "nvidia" if self.provider == "meterless" and to_nim and self.api_key else self.provider
+        if provider == "meterless":
             url = f"{meterless.normalize_base_url(self.settings.meterless_base_url)}/chat/completions"
-            hdrs = meterless.headers(self.settings.meterless_runtime_token, chat=True)
+            # One answer phase: no planning pass in front of a structured agent turn. A fresh
+            # scope per call keeps Nightshift's own answer memory and cache out of the loop:
+            # the only memory a guardian sees is RecoveryPact's governed H-MEM.
+            hdrs = {
+                **meterless.headers(self.settings.meterless_runtime_token, chat=True),
+                "meterless-tier-split": "off",
+                "meterless-scope": f"recovery-pact-call-{uuid.uuid4().hex[:12]}",
+            }
             wire_model = self.settings.meterless_route(model)
             timeout = max(self.timeout, meterless.TIMEOUT_S)
-            if not self.thinking:
-                extra = {k: v for k, v in extra.items() if k != "chat_template_kwargs"}
+            # The runtime keeps Nemotron thinking on (it does not forward chat_template_kwargs),
+            # so a JSON turn needs room for the reasoning before the answer.
+            extra = {k: v for k, v in extra.items() if k != "chat_template_kwargs"}
+            if require_json and not self.thinking:
+                extra["max_tokens"] = extra.get("max_tokens", self.max_tokens) * 4
         else:
             url = f"{self.base_url}/chat/completions"
             hdrs = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", "Accept": "application/json"}
@@ -151,7 +165,7 @@ class InferenceClient:
             try:
                 with httpx.Client(timeout=timeout) as client:
                     resp = client.post(url, headers=hdrs, json=body)
-                    if self.provider == "meterless" and resp.status_code in (401, 403):
+                    if provider == "meterless" and resp.status_code in (401, 403):
                         raise RuntimeError(f"Meterless Runtime refused the token (HTTP {resp.status_code}); "
                                            "copy the Runtime API key from the Nightshift Console")
                     # Rate limiting is the API's capacity, not the model's answer: wait it out
@@ -179,7 +193,7 @@ class InferenceClient:
                 metrics = {
                     "mode": "nemotron",
                     "model": model,
-                    "provider": self.provider,
+                    "provider": provider,
                     "route": wire_model,
                     "served_by": data.get("model") or wire_model,
                     # Nightshift's signed receipt for this call carries the same id (receipt.request_id).
@@ -241,10 +255,22 @@ def parse_json(content: str) -> dict[str, Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start >= 0 and end > start:
-            return json.loads(text[start : end + 1])
-        raise
+        pass
+    # Reasoning printed before the answer may itself contain braces: take the last
+    # top-level JSON object in the text.
+    dec, found, i = json.JSONDecoder(), None, text.find("{")
+    while i >= 0:
+        try:
+            obj, end = dec.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict):
+            found = obj
+        i = text.find("{", end)
+    if found is None:
+        raise json.JSONDecodeError("no JSON object in the answer", text, 0)
+    return found
 
 
 _client: InferenceClient | None = None

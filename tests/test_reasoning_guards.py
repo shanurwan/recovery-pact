@@ -241,3 +241,65 @@ def test_tradeoff_arithmetic_is_done_in_code():
     assert row["wait_within_tolerance"] is False
     assert "EXCEEDS" in t.summary
     assert derive_tradeoff(led) is None  # same inputs: nothing new
+
+
+# ------------------------------------------------- business federation down
+
+
+def unavailable(ledger: EvidenceLedger, probe: str, app: str = APP):
+    return ledger.add(probe=probe, source="business_unavailable",
+                      summary=f"UNAVAILABLE: what it says about {app} is UNKNOWN", facts={"records": [], "notes": []})
+
+
+def test_unreachable_calendar_is_unknown_not_empty():
+    # Registry fine, calendar unreachable: "no window found" must not be assumed.
+    led = EvidenceLedger()
+    lg = lock_graph(led)
+    registry(led)
+    unavailable(led, "biz.change_calendar")
+    out = enforce_business_invariants(accept(), terminate_proposal([lg.evidence_id]), ctx_for(led))
+    assert out.decision == ChallengeDecision.REQUEST_REVISION
+    assert "biz.change_calendar" in out.required_evidence
+
+
+def test_unreachable_registry_blocks_termination():
+    led = EvidenceLedger()
+    lg = lock_graph(led)
+    unavailable(led, "biz.workload_registry")
+    calendar(led)
+    out = enforce_business_invariants(accept(), terminate_proposal([lg.evidence_id]), ctx_for(led))
+    assert out.decision != ChallengeDecision.ACCEPT
+    assert "biz.workload_registry" in out.required_evidence
+
+
+def test_no_tradeoff_arithmetic_on_unknown_impact():
+    led = EvidenceLedger()
+    lock_graph(led)
+    registry(led)
+    unavailable(led, "biz.impact")
+    assert derive_tradeoff(led) is None
+
+
+def test_injected_zetaris_outage_reports_unavailable_without_fallback(monkeypatch):
+    from app.integrations.zetaris import business
+
+    ctx = business.BusinessContext()
+    ctx.zetaris_enabled, ctx.fallback, ctx.outage = True, False, {"calendar"}
+    ans = ctx.change_calendar([APP])
+    assert ans.source == "business_unavailable" and ans.records == []
+    assert "injected outage" in ans.notes[0]
+
+
+def test_unreachable_impact_still_gives_the_verifier_a_floor(monkeypatch):
+    from app.evidence import collector
+    from app.integrations.zetaris.business import BusinessAnswer
+
+    class Down:
+        def impact(self, window_seconds=30):
+            return BusinessAnswer("business_unavailable", [], "SELECT ...", 0.0, notes=["zetaris_error: down"])
+
+    monkeypatch.setattr(collector, "get_business_context", lambda: Down())
+    ev = collector.probe_impact(EvidenceLedger(), "continuity_guardian")
+    assert ev.summary.startswith("UNAVAILABLE")
+    assert ev.facts["slo_success_rate"] == 0.95 and ev.facts["verification_defaults"] is True
+    assert "revenue_at_risk_per_min" not in ev.facts

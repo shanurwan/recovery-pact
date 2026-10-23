@@ -38,7 +38,7 @@ def test_business_sources_read_evidence_ids(tmp_path):
     ev = [{"evidence_id": "BIZ-1", "source": "zetaris"}, {"evidence_id": "BIZ-2", "source": "zetaris"},
           {"evidence_id": "DB-1", "source": "postgresql_observer"}]
     _trace(tmp_path, "a.json", "pact", "main", [{"kind": "evidence", "data": {"evidence": ev[0]}}], ev)
-    assert _business_sources(tmp_path) == {"zetaris": 2, "local_federation_fallback": 0}
+    assert _business_sources(tmp_path) == {"zetaris": 2, "local_federation_fallback": 0, "business_unavailable": 0}
 
 
 def test_ungrounded_citation_is_an_error_unless_the_scaffold_was_off():
@@ -54,3 +54,12 @@ def test_ungrounded_citation_is_an_error_unless_the_scaffold_was_off():
     audit_trace(trace(False), off, "t")
     assert on.errors and not on.findings
     assert not off.errors and len(off.findings) == 1
+
+
+def test_json_after_inline_reasoning_with_braces():
+    from app.integrations.nemotron.client import parse_json
+
+    text = ('Let me think. The schema is {"candidate_id": "<id>"} and DB-1 shows {pid 101}.\n'
+            'So: {"candidate_id": "escalate", "cited_evidence": ["DB-1"], "nested": {"a": 1}}')
+    assert parse_json(text) == {"candidate_id": "escalate", "cited_evidence": ["DB-1"], "nested": {"a": 1}}
+    assert parse_json('{"a": 1}') == {"a": 1}

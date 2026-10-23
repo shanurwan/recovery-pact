@@ -59,6 +59,7 @@ class EvidenceLedger:
         "checkout_telemetry": "TEL",
         "zetaris": "BIZ",
         "local_federation_fallback": "BIZ",
+        "business_unavailable": "BIZ",
         "meterless_hmem": "MEM",
     }
 
@@ -237,10 +238,19 @@ def _biz_evidence(
     )
 
 
+def _unavailable(what: str, names: list[str]) -> str:
+    return (
+        f"UNAVAILABLE: the {what} could not be reached (business federation down). "
+        f"What it says about {', '.join(names)} is UNKNOWN; this is not evidence that nothing is there."
+    )
+
+
 def probe_workload_registry(
     ledger: EvidenceLedger, app_names: list[str], requested_by: str
 ) -> Evidence:
     ans = get_business_context().workload_registry(app_names)
+    if ans.source == "business_unavailable":
+        return _biz_evidence(ledger, "biz.workload_registry", ans, _unavailable("workload registry", app_names), requested_by)
     known = {r["application_name"] for r in ans.records}
     parts = []
     guard_log: list[dict[str, Any]] = []
@@ -266,6 +276,8 @@ def probe_change_calendar(
     ledger: EvidenceLedger, app_names: list[str], requested_by: str
 ) -> Evidence:
     ans = get_business_context().change_calendar(app_names)
+    if ans.source == "business_unavailable":
+        return _biz_evidence(ledger, "biz.change_calendar", ans, _unavailable("change calendar", app_names), requested_by)
     guard_log: list[dict[str, Any]] = []
     for r in ans.records:
         r["reason"] = untrusted(r.get("reason"), "change-calendar reason", guard_log)
@@ -284,6 +296,13 @@ def probe_change_calendar(
 
 def probe_impact(ledger: EvidenceLedger, requested_by: str, window_s: int = 30) -> Evidence:
     ans = get_business_context().impact(window_s)
+    if ans.source == "business_unavailable":
+        ev = _biz_evidence(ledger, "biz.impact", ans, _unavailable("business impact (SLO, revenue)", ["checkout"]), requested_by)
+        # The verifier still needs a bar to verify against: the static floor, labeled as such.
+        # Revenue at risk stays unknown, so no trade-off is computed from it.
+        ev.facts.update({"slo_success_rate": 0.95, "verification_window_s": 10, "max_degradation_s": 60,
+                         "verification_defaults": True})
+        return ev
     r = ans.records[0] if ans.records else {}
     total = int(r.get("total") or 0)
     failed = int(r.get("failed") or 0)
@@ -336,6 +355,8 @@ def derive_tradeoff(ledger: EvidenceLedger) -> Evidence | None:
     reg_ev = ledger.latest("biz.workload_registry")
     if not (lock and impact and reg_ev):
         return None
+    if "business_unavailable" in (impact.source, reg_ev.source):
+        return None  # no arithmetic on unknown inputs
     prev = ledger.latest("biz.tradeoff")
     if prev and prev.facts.get("inputs", [])[1:] == [reg_ev.evidence_id, impact.evidence_id]:
         return None  # same registry and impact: nothing new to say

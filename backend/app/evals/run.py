@@ -64,7 +64,7 @@ def _row(run, phase: str) -> dict[str, Any]:
     }
 
 
-BIZ_SOURCES = ("zetaris", "local_federation_fallback")
+BIZ_SOURCES = ("zetaris", "local_federation_fallback", "business_unavailable")
 
 
 def _business_sources(runs_dir: Path) -> dict[str, int]:
@@ -151,7 +151,8 @@ def _markdown(summary: dict[str, Any]) -> str:
         total = sum(bs.values())
         lines += [
             f"Business evidence: {bs['zetaris']}/{total} items from live Zetaris federation, "
-            f"{bs['local_federation_fallback']} from the labeled local fallback.",
+            f"{bs['local_federation_fallback']} from the labeled local fallback"
+            + (f", {bs['business_unavailable']} unavailable (injected Zetaris outage)." if bs.get("business_unavailable") else "."),
             "",
         ]
     for arch, c in (summary.get("fail_closed") or {}).items():
@@ -232,6 +233,10 @@ def main() -> None:
     ap.add_argument("--no-encores", action="store_true")
     ap.add_argument("--keep-memory", action="store_true")
     ap.add_argument("--repeats", type=int, default=1)
+    ap.add_argument("--encore-control", action="store_true",
+                    help="before each memory encore, run the same incident with memory off (controls for warm-up)")
+    ap.add_argument("--seed-memory", metavar="JSON",
+                    help="memories written into H-MEM at the start of every repeat (e.g. a forged one)")
     ap.add_argument("--refresh", metavar="RESULT_DIR",
                     help="recompute the derived summary lines of a finished result from its traces, then validate")
     args = ap.parse_args()
@@ -254,6 +259,9 @@ def main() -> None:
         "runs": [],
     }
     rows: list[dict[str, Any]] = []
+    seeds = json.loads(Path(args.seed_memory).read_text(encoding="utf-8")) if args.seed_memory else []
+    if seeds:
+        summary["seeded_memories"] = seeds
 
     def record(run, phase: str, rep: int) -> dict[str, Any]:
         if run.result.get("outcome") == "NOT_RUN":
@@ -281,6 +289,10 @@ def main() -> None:
         # Each repeat starts from empty memory, so repeats are independent samples.
         if not args.keep_memory:
             get_hmem().clear()
+        for m in seeds:
+            get_hmem().add(m["content"], tags=m.get("tags", []), entities=m.get("entities", []),
+                           confidence=m.get("confidence", 0.9), provenance=m.get("provenance", {}),
+                           conflict_key=m.get("conflict_key"), verdict=m.get("verdict"))
         for arch in arms:
             for sc in scenarios:
                 record(run_blocking(sc, arch, use_memory=arch == Architecture.PACT, slot="main"), "main", rep)
@@ -289,6 +301,13 @@ def main() -> None:
                 if sc not in scenarios:
                     continue
                 first = next(r for r in rows if r["arch"] == "pact" and r["scenario"] == sc.value and r["repeat"] == rep)
+                if args.encore_control:
+                    ctl = record(run_blocking(sc, Architecture.PACT, use_memory=False, slot="encore-control"), "encore_nomem", rep)
+                    encores.append(
+                        f"rep {rep} {sc.value}: control, memory off: {ctl['outcome']} ({ctl['action']}"
+                        f"{'' if ctl['executed'] else ', not run'}) in {ctl['rounds']} round(s), {ctl['model_calls']} calls, "
+                        f"{ctl['duration_s']}s, {ctl['lost_checkouts']} lost checkouts"
+                    )
                 again = record(run_blocking(sc, Architecture.PACT, use_memory=True, slot="encore"), "encore", rep)
                 encores.append(
                     f"rep {rep} {sc.value}: first {first['outcome']} ({first['action']}"

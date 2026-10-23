@@ -362,12 +362,16 @@ def enforce_business_invariants(
         for rec in ev.facts.get("records", [])
         if rec.get("application_name") == app
     ]
+    # An unreachable source is unknown, not empty: it never satisfies I2 or I4.
     registry_probed = any(
-        app in (ev.summary or "") for ev in ctx.ledger.by_probe("biz.workload_registry")
+        app in (ev.summary or "")
+        for ev in ctx.ledger.by_probe("biz.workload_registry")
+        if ev.source != "business_unavailable"
     )
     calendar_probed = any(
         app in (ev.summary or "") or app in str(ev.facts)
         for ev in ctx.ledger.by_probe("biz.change_calendar")
+        if ev.source != "business_unavailable"
     )
     override: tuple[ChallengeDecision, str, list[str], list[str]] | None = None
     owner_window = _active_owner_window(ctx, app)

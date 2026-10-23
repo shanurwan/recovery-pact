@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     meterless_routes: str = ""
     # Optional embedding route on the runtime; empty uses the H-MEM spec's hash embedder.
     meterless_embed_model: str = ""
+    # The injection guard (its safety classifiers are not in the runtime's catalog) and these
+    # models are called on the NVIDIA API directly when a key is set; every agent turn
+    # (guardians, auditor) stays on Meterless.
+    meterless_direct_models: str = "nvidia/llama-3.1-nemotron-safety-guard-8b-v3,nvidia/nemotron-3.5-content-safety"
 
     # --- Inference: NVIDIA Nemotron (OpenAI-compatible NIM API) ---
     nvidia_api_key: str = ""
@@ -87,6 +91,12 @@ class Settings(BaseSettings):
     zetaris_shop_ds: str = "shop"
     zetaris_calendar_db: str = "RP_CHANGE_MGMT"
     change_calendar_csv: str = "./seed/business/change_calendar.csv"
+    # When Zetaris fails: answer locally from the same sources, labeled (true), or report
+    # the business context as unavailable, which the pact treats as unknown (false).
+    business_fallback: bool = True
+    # Fault injection for the dependency experiments: questions whose Zetaris call fails,
+    # e.g. "calendar" or "registry,calendar,impact" or "all". Empty in normal operation.
+    business_outage: str = ""
 
     # --- Meterless H-MEM ---
     hmem_persist_dir: str = "./data/hmem"

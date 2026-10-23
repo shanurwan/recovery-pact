@@ -430,7 +430,7 @@ class Orchestrator:
             ev = run_probe(self.run.ledger, p, apps, requested_by)
             if ev:
                 ran = True
-                actor = "zetaris" if ev.source in ("zetaris", "local_federation_fallback") else "observer"
+                actor = "zetaris" if ev.source in ("zetaris", "local_federation_fallback", "business_unavailable") else "observer"
                 self.run.emit("probe", actor, f"{requested_by} requested {p}: {ev.summary}", evidence=ev,
                               requested_by=requested_by)
                 self._note_guard(ev)

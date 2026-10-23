@@ -23,6 +23,7 @@ EvidenceSource = Literal[
     "postgresql_observer",
     "zetaris",
     "local_federation_fallback",
+    "business_unavailable",
     "meterless_hmem",
     "checkout_telemetry",
 ]
