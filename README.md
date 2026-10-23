@@ -200,6 +200,18 @@ The validator trusts nothing in `summary.json`. It recomputes every aggregate fr
 
 ## Sponsor technology
 
+**Proof, measured by taking each component away** (details in [blogs.md → Sponsor proof](blogs.md#sponsor-proof-take-each-component-away-and-measure-what-breaks); rerun with `bash scripts/sponsor-proof.sh <experiment>`):
+
+| Sponsor | Experiment | Result | Validator |
+|---|---|---|---|
+| Zetaris | Zetaris unreachable, no fallback | 0 unsafe, but 0 / 9 verified recoveries; 11,696 lost checkouts vs 6,757 | 847 / 847 |
+| Zetaris | Only the change calendar unreachable | business freeze still caught 3 / 3; 0 unsafe | 216 / 216 |
+| Zetaris | Registry edited in the source system | decision followed the live row 6 / 6 (86–96 ms per query) | 6 / 6 |
+| Meterless Nightshift | Full benchmark through Nightshift | 23 / 24 correct, 0 unsafe; 95 / 95 Ed25519 receipts verified; tamper test fails | 794 / 794 |
+| Meterless H-MEM | Memory off vs on, same incident | known-ineffective kill avoided 3 / 3; fewer lost checkouts | 625 / 625 |
+| H-MEM + Zetaris | Forged "pre-approved kill" memory planted | fooled the first proposal 3 / 3; live Zetaris registry overruled it 3 / 3 | 106 / 106 |
+| Cursor | Read-only MCP server for post-incident review | [`tools/recoverypact-mcp`](tools/recoverypact-mcp/README.md), 5 tools, tested | 5 / 5 tests |
+
 ### Zetaris: the Continuity Guardian's eyes
 The business context lives in three systems that know nothing about each other. Zetaris federates them, and each guardian question is **one SQL statement across sources**:
 
@@ -213,7 +225,7 @@ The business context lives in three systems that know nothing about each other. 
 
 ### Meterless: the AI runtime and the memory
 
-**Nightshift is the primary AI provider.** Every Nemotron call in RecoveryPact goes through Meterless Runtime by default: guardians, auditor and injection guard. The NVIDIA key lives in Nightshift's Providers tab, never in this repository. `backend/app/integrations/meterless/runtime.py` implements the official provider contract for Runtime 0.90.0:
+**Nightshift is the primary AI provider.** Every guardian and auditor call goes through Meterless Runtime by default. The injection guard's classifier calls (Safety Guard 8B, Content Safety) go to NIM directly, because their raw verdict format must not be rewritten; `METERLESS_DIRECT_MODELS` lists them. The NVIDIA key lives in Nightshift's Providers tab, never in this repository. `backend/app/integrations/meterless/runtime.py` implements the official provider contract for Runtime 0.90.0:
 - pasted URLs normalised to `<host>/v1`;
 - a real Bearer token, with `rt-local` and the example placeholder rejected;
 - `meterless-app: recovery-pact` on every request and `meterless-scope: user` on chat;
@@ -221,7 +233,7 @@ The business context lives in three systems that know nothing about each other. 
 - Auto Detect on ports 8088, 8090, 8787 and 11434;
 - a 180 s timeout.
 
-Agents ask for a logical Nemotron model and `METERLESS_ROUTES` maps it to a Nightshift lane, for example Lightning to `meterless/fast` and Super to `meterless/deep`. The model Nightshift actually served is recorded with every call (`served_by` in each turn's metrics), so the trace proves which Nemotron answered.
+Agents ask for a logical Nemotron model and `METERLESS_ROUTES` maps it to a Nightshift lane, for example Lightning to `meterless/fast` and Super to `meterless/deep`. The model Nightshift actually served is recorded with every call (`served_by` in each turn's metrics), and `scripts/nightshift-receipts.py` verifies Nightshift's Ed25519-signed receipt for each call offline, so the trace proves which Nemotron answered. Each call sends its own `meterless-scope` and `meterless-tier-split: off`, so Nightshift adds no memory of its own and returns one complete answer.
 
 **H-MEM is the guardians' memory** (`backend/app/memory/hmem.py`), a Python implementation of the Meterless H-MEM spec:
 - the ranking formula verbatim (`0.35·semantic + 0.20·keyword + 0.10·tag + 0.10·domain + 0.15·entity + 0.05·layer + 0.05·recency − 0.20·superseded`, × confidence; keyword, tag and entity are Jaccard, recency decays from last access);
@@ -242,8 +254,11 @@ Memory is weak evidence by design. It may change what the guardians check first,
 - **Memory embeddings:** `nvidia/nemotron-3-embed-1b` (direct provider), or an embedding route on the runtime (`METERLESS_EMBED_MODEL`).
 - **Served through Meterless Nightshift** by default, or through the NVIDIA NIM API directly (`AI_PROVIDER=nvidia`).
 
+### Cursor: post-incident review in the IDE
+Cursor's CLI agent built [`tools/recoverypact-mcp`](tools/recoverypact-mcp/README.md), a read-only MCP server registered in `.cursor/mcp.json`: `list_runs`, `explain_run`, `compare_arms`, `validate_results`, `verify_receipts`. Ask Cursor *"why did the pact refuse to kill the settlement in incident B?"* and it answers from the run record, the validator and the signed receipts. It can't start an incident or call the executor. Prompts and a real transcript: [`docs/cursor.md`](docs/cursor.md).
+
 ### Development tools
-Built with Claude Code as the AI coding tool (Cursor is optional under the updated Build rules). The Meterless Engine requirement is met by H-MEM: it runs in every pact and passes Meterless's conformance suite.
+Cursor is the project's AI development tool: its agent built and tested the RecoveryPact MCP server above, and `.cursor/rules/recoverypact.mdc` holds the project rules every Cursor session follows (safety boundaries, results treated as evidence, scoped commits). The Meterless Engine requirement is met by H-MEM: it runs in every pact and passes Meterless's conformance suite.
 
 ---
 
