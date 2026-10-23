@@ -59,8 +59,61 @@ def _row(run, phase: str) -> dict[str, Any]:
         "recalled_memories": r.get("recalled_memories"),
         "lost_checkouts": r.get("lost_checkouts"),
         "settlements_aborted": r.get("settlements_aborted"),
+        "injection_flagged": r.get("injection_flagged"),
         "repeat": getattr(run, "repeat", 1),
     }
+
+
+BIZ_SOURCES = ("zetaris", "local_federation_fallback")
+
+
+def _business_sources(runs_dir: Path) -> dict[str, int]:
+    """Distinct business-evidence items per source, read back from the saved traces."""
+    seen: set[tuple[str, str]] = set()
+    counts = {k: 0 for k in BIZ_SOURCES}
+
+    def walk(o: Any, fname: str) -> None:
+        if isinstance(o, dict):
+            src = o.get("source")
+            eid = o.get("evidence_id") or o.get("id")
+            if src in counts and eid:
+                key = (fname, str(eid))
+                if key not in seen:
+                    seen.add(key)
+                    counts[src] += 1
+            for v in o.values():
+                walk(v, fname)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, fname)
+
+    for f in sorted(runs_dir.glob("*.json")):
+        walk(json.loads(f.read_text(encoding="utf-8")), f.name)
+    return counts
+
+
+def _fail_closed(runs_dir: Path) -> dict[str, dict[str, int]]:
+    """Main runs per arm that escalated because a guardian turn failed, split by cause.
+
+    provider_error: the model API gave no answer after retries (an outage, not reasoning).
+    ungrounded: the model answered but failed the grounding check twice.
+    Traces from before the trace named the reason are classified by their metrics:
+    a failed turn with no model answer at all can only be a provider error.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for f in sorted(runs_dir.glob("*.json")):
+        t = json.loads(f.read_text(encoding="utf-8"))
+        if t.get("slot") != "main":
+            continue
+        counts = out.setdefault(t.get("arch", "?"), {"provider_error": 0, "ungrounded": 0})
+        for e in t.get("events", []):
+            if e.get("kind") != "grounding" or e.get("actor") != "grounding_check":
+                continue
+            d = e.get("data") or {}
+            reason = d.get("reason") or ("ungrounded" if d.get("metrics") else "provider_error")
+            counts[reason] += 1
+            break
+    return {a: c for a, c in out.items() if any(c.values())}
 
 
 def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -92,6 +145,22 @@ def _markdown(summary: dict[str, Any]) -> str:
         f"Model `{summary['model']}` ({summary['inference_mode']}), business context via "
         f"`{summary['zetaris_mode']}`, {summary['started_at']}.",
         "",
+    ]
+    bs = summary.get("business_sources")
+    if bs:
+        total = sum(bs.values())
+        lines += [
+            f"Business evidence: {bs['zetaris']}/{total} items from live Zetaris federation, "
+            f"{bs['local_federation_fallback']} from the labeled local fallback.",
+            "",
+        ]
+    for arch, c in (summary.get("fail_closed") or {}).items():
+        lines += [
+            f"Fail-closed escalations ({arch}): {c['provider_error']} after model-provider errors "
+            f"(no answer after retries), {c['ungrounded']} after two ungrounded answers. None acted.",
+            "",
+        ]
+    lines += [
         "## Architectures",
         "",
         "| Arm | Correct | Unsafe actions | Business harm | False recovery claims | Settlements aborted | Verified recoveries | Lost checkouts | Median time (s) | Model calls |",
@@ -134,6 +203,27 @@ def _yn(v: Any) -> str:
     return "YES" if v else "-"
 
 
+def refresh(out_dir: Path) -> int:
+    """Re-derive the trace-read summary lines (business sources, fail-closed causes).
+
+    The rows and aggregates are untouched: the validator still recomputes them from the traces.
+    """
+    path = out_dir / "summary.json"
+    summary = json.loads(path.read_text(encoding="utf-8"))
+    summary["business_sources"] = _business_sources(out_dir / "runs")
+    summary["fail_closed"] = _fail_closed(out_dir / "runs")
+    path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out_dir / "summary.md").write_text(_markdown(summary), encoding="utf-8")
+    rep = validate(out_dir)
+    print(f"{out_dir.name}: business {summary['business_sources']}, fail-closed {summary['fail_closed']}")
+    print(("VALID" if not rep.errors else "INVALID") + f": {rep.checks - len(rep.errors)}/{rep.checks} checks passed")
+    for e in rep.errors[:20]:
+        print(f"  - {e}")
+    if rep.findings:
+        print(f"FINDINGS: {len(rep.findings)} ungrounded citations let through with the reasoning scaffold off")
+    return 1 if rep.errors else 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", default="latest")
@@ -142,7 +232,11 @@ def main() -> None:
     ap.add_argument("--no-encores", action="store_true")
     ap.add_argument("--keep-memory", action="store_true")
     ap.add_argument("--repeats", type=int, default=1)
+    ap.add_argument("--refresh", metavar="RESULT_DIR",
+                    help="recompute the derived summary lines of a finished result from its traces, then validate")
     args = ap.parse_args()
+    if args.refresh:
+        raise SystemExit(refresh(Path(args.refresh)))
 
     arms = [Architecture(a.strip()) for a in args.arms.split(",")]
     scenarios = _scenarios(args.scenarios)
@@ -216,6 +310,8 @@ def main() -> None:
                 per.setdefault(sc.value, {})[arch.value] = f"{sum(1 for r in rs if r['correct'])}/{len(rs)}"
     summary["per_scenario"] = per
     summary["encores"] = encores
+    summary["business_sources"] = _business_sources(out_dir / "runs")
+    summary["fail_closed"] = _fail_closed(out_dir / "runs")
     summary["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (out_dir / "summary.md").write_text(_markdown(summary), encoding="utf-8")
@@ -224,6 +320,8 @@ def main() -> None:
     print(("VALID" if not rep.errors else "INVALID") + f": {rep.checks - len(rep.errors)}/{rep.checks} checks passed")
     for e in rep.errors[:20]:
         print(f"  - {e}")
+    if rep.findings:
+        print(f"FINDINGS: {len(rep.findings)} ungrounded citations let through with the reasoning scaffold off")
     raise SystemExit(1 if rep.errors else 0)
 
 

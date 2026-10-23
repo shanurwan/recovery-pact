@@ -77,6 +77,9 @@ def build_manifest() -> dict[str, Any]:
         "scenarios": {sc.value: {"expected_outcome": spec.expected_outcome, "expected_action": spec.expected_action}
                       for sc, spec in SCENARIOS.items()},
         "model": client.model_id,
+        "models_by_role": {r: s.model_for(r) for r in ("database_guardian", "continuity_guardian", "auditor", "solo_agent")},
+        "reasoning_scaffold": s.reasoning_scaffold,
+        "guard": {"enabled": s.guard_enabled and s.reasoning_scaffold, "model": s.guard_model, "fallback": s.guard_fallback_model},
         "inference_mode": client.mode,
         "thinking": s.nemotron_thinking,
         "temperature": s.inference_temperature,

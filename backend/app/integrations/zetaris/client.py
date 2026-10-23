@@ -3,9 +3,10 @@
     POST {ZETARIS_URL}/api/auth/login                       -> idToken
     POST {ZETARIS_URL}/api/proxy/sql-editor/sqls/run-query  (Bearer idToken, X-Org-ID)
 
-Tokens live about 15 minutes; an expired token comes back as 400 "Not Allowed"
-rather than 401, so both trigger exactly one re-login. Login failures are not
-retried: three bad logins lock the account.
+Tokens live about 15 minutes. An expired token comes back as 400 ("Not Allowed"
+or a bare "Bad Request") rather than 401, so the client refreshes the token
+before it gets old and re-logs in exactly once on any 400/401/403. Login
+failures are not retried: three bad logins lock the account.
 """
 
 from __future__ import annotations
@@ -21,6 +22,9 @@ import httpx
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+TOKEN_MAX_AGE_S = 10 * 60
 
 
 class ZetarisError(RuntimeError):
@@ -46,6 +50,7 @@ class ZetarisClient:
         self.org_id = s.zetaris_org_id
         self.timeout = s.zetaris_timeout_seconds
         self._token: str | None = None
+        self._token_at = 0.0
         self._lock = threading.Lock()
 
     def _headers(self, token: str | None = None) -> dict[str, str]:
@@ -68,17 +73,16 @@ class ZetarisClient:
         if not token:
             raise ZetarisError(f"login returned no token (keys={list(body)})")
         self._token = token
+        self._token_at = time.monotonic()
         return token
 
     def query(self, sql: str, limit: int = 200) -> QueryResult:
         with self._lock:
-            token = self._token or self.login()
+            fresh = self._token and time.monotonic() - self._token_at < TOKEN_MAX_AGE_S
+            token = self._token if fresh else self.login()
         started = time.perf_counter()
         resp = self._run(sql, limit, token)
-        expired = resp.status_code == 401 or (
-            resp.status_code in (400, 403) and "not allowed" in resp.text.lower()
-        )
-        if expired:
+        if resp.status_code in (400, 401, 403):
             with self._lock:
                 token = self.login()
             resp = self._run(sql, limit, token)

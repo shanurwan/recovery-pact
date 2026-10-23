@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.entrypoint import execute as execute_run
 from app.db.session import get_observer_engine, session_scope
 from app.incidents.injector import injector
 from app.incidents.scenarios import SCENARIOS
@@ -69,7 +70,7 @@ def status() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         memories = -1
     return {
-        "inference": {"mode": client.mode, "model": client.model_id},
+        "inference": {"mode": client.mode, "model": client.model_id, "provider": client.provider},
         "zetaris": {"mode": biz.mode, "url": get_settings().zetaris_url if biz.zetaris_enabled else None},
         "memory": {"enabled": get_settings().hmem_enabled, "count": memories},
         "busy": run_store.busy.locked(),
@@ -118,6 +119,28 @@ def create_run(req: RunRequest) -> dict[str, Any]:
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return run.summary()
+
+
+@app.get("/api/provider")
+def provider_status() -> dict[str, Any]:
+    """Meterless Runtime status per the provider contract: online, unauthorized or offline."""
+    from app.integrations.meterless import runtime
+
+    s = get_settings()
+    st = runtime.status()
+    out = st.as_dict() | {"active_provider": s.ai_provider, "default_route": s.meterless_model,
+                          "routes": s.meterless_route_map}
+    if st.state == "offline":
+        found = runtime.auto_detect()
+        if found.state != "offline":
+            out["auto_detected"] = found.as_dict()
+    return out
+
+
+@app.post("/run")
+def run_once(request: dict[str, Any]) -> dict[str, Any]:
+    """JSON in, JSON out: run one incident to completion and return the result and trace path."""
+    return execute_run(request)
 
 
 @app.get("/api/runs")

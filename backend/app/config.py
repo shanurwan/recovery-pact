@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     api_port: int = 8000
     cors_origins: str = "http://localhost:8080,http://localhost:3000"
 
+    # --- AI provider ---
+    # meterless (primary): every model call goes through Meterless Runtime (Nightshift),
+    # which serves the Nemotron models configured in its lanes; the NVIDIA key lives
+    # in Nightshift's Providers tab. nvidia: call the NVIDIA NIM API directly.
+    ai_provider: str = "meterless"
+    meterless_base_url: str = "http://127.0.0.1:8088/v1"
+    meterless_runtime_token: str = ""
+    meterless_model: str = "meterless/auto"
+    # Logical Nemotron model -> Meterless route, e.g.
+    # METERLESS_ROUTES="nvidia/nemotron-3.5-lightning-30b-a3b=meterless/fast,nvidia/nemotron-3-super-120b-a12b=meterless/deep"
+    # Models not listed go to METERLESS_MODEL.
+    meterless_routes: str = ""
+    # Optional embedding route on the runtime; empty uses the H-MEM spec's hash embedder.
+    meterless_embed_model: str = ""
+
     # --- Inference: NVIDIA Nemotron (OpenAI-compatible NIM API) ---
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
@@ -38,10 +53,24 @@ class Settings(BaseSettings):
     nemotron_thinking: bool = False
     # nemotron: live calls (recorded). replay: recorded Nemotron responses.
     inference_mode: str = "nemotron"
+    # SAMPLE_MODE=true: replay recorded Nemotron decisions, no API key or model network needed.
+    sample_mode: bool = False
     inference_timeout_seconds: float = 90.0
     inference_max_retries: int = 2
     inference_temperature: float = 0.2
     inference_max_tokens: int = 1500
+    # Per-role models; empty means NEMOTRON_MODEL. Lets a team mix Nemotron sizes.
+    model_database_guardian: str = ""
+    model_continuity_guardian: str = ""
+    model_auditor: str = ""
+    model_solo_agent: str = ""
+    # Reasoning scaffold: grounding retries, evidence checklist, trade-off calculator,
+    # code-enforced business invariants and the injection guard. Off only for ablation.
+    reasoning_scaffold: bool = True
+    # Untrusted text from the database and business systems is screened before agents see it.
+    guard_enabled: bool = True
+    guard_model: str = "nvidia/nemotron-3.5-content-safety"
+    guard_fallback_model: str = "nvidia/llama-3.1-nemotron-safety-guard-8b-v3"
     recordings_dir: str = "./recordings"  # shipped recordings, read by replay
     record_dir: str = "./data/recordings"  # where live runs write new recordings
     embedding_model: str = "nvidia/nemotron-3-embed-1b"
@@ -77,6 +106,22 @@ class Settings(BaseSettings):
     checkout_timeout_ms: int = 3000
     traffic_rps: float = 4.0
     runs_dir: str = "./data/runs"
+    logs_dir: str = "./logs"
+
+    @property
+    def meterless_route_map(self) -> dict[str, str]:
+        out = {}
+        for pair in self.meterless_routes.split(","):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                out[k.strip()] = v.strip()
+        return out
+
+    def meterless_route(self, model: str) -> str:
+        return self.meterless_route_map.get(model, self.meterless_model)
+
+    def model_for(self, role: str) -> str:
+        return getattr(self, f"model_{role}", "") or self.nemotron_model
 
     @property
     def cors_origin_list(self) -> list[str]:

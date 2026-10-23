@@ -31,6 +31,7 @@ from app.agents.prompts import (
     SOLO_SYSTEM,
     probes_block,
 )
+from app.config import get_settings
 from app.evidence.collector import EvidenceLedger
 from app.integrations.nemotron.client import get_inference_client
 from app.schemas.enums import CandidateKind, ChallengeDecision
@@ -130,8 +131,16 @@ def _resolve_candidate(cid: str, ctx: "TurnContext") -> str:
     return matches[0] if len(matches) == 1 else cid
 
 
-def _call(system: str, user: str, call_key: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    return get_inference_client().complete_json(system=system, user=user, call_key=call_key)
+ROLE_OF = {"database_guardian": "database_guardian", "continuity_guardian": "continuity_guardian", "solo_agent": "solo_agent"}
+
+
+def scaffold_on() -> bool:
+    return get_settings().reasoning_scaffold
+
+
+def _call(system: str, user: str, call_key: str, actor: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    model = get_settings().model_for(ROLE_OF.get(actor, actor))
+    return get_inference_client().complete_json(system=system, user=user, call_key=call_key, model=model)
 
 
 def _run_turn(
@@ -146,7 +155,7 @@ def _run_turn(
     feedback = ""
     for attempt in (1, 2):
         try:
-            raw, m = _call(system, user + feedback, f"{call_key}-a{attempt}")
+            raw, m = _call(system, user + feedback, f"{call_key}-a{attempt}", actor)
         except Exception as exc:  # noqa: BLE001 — inference down: fail closed, escalate
             logger.warning("%s inference unavailable: %s", actor, exc)
             return TurnRecord(
@@ -164,9 +173,9 @@ def _run_turn(
             problems = [f"invalid JSON for the required shape: {str(exc)[:300]}"]
             feedback = _retry_note(problems)
             continue
-        g = ground(parsed)
-        if g.ok:
-            return TurnRecord(actor, parsed, g, metrics, attempt)
+        g = ground(parsed) if scaffold_on() else _exists_only(parsed)
+        if g.ok or not scaffold_on():
+            return TurnRecord(actor, parsed, g, metrics, attempt, failed=not g.ok)
         feedback = _retry_note(g.problems)
     return TurnRecord(
         actor,
@@ -176,6 +185,10 @@ def _run_turn(
         2,
         failed=True,
     )
+
+
+def _exists_only(parsed: Any) -> GroundingResult:
+    return GroundingResult(ok=True)
 
 
 def _retry_note(problems: list[str]) -> str:
@@ -228,10 +241,8 @@ def database_guardian_turn(ctx: TurnContext, revising: bool | str) -> TurnRecord
         )
     else:
         task = "YOUR TASK: Propose one candidate action to resolve the incident."
-    user = (
-        ctx.render()
-        + f"\n{evidence_checklist(ctx)}\n\n{task}\nRespond with ONLY JSON matching:\n{PROPOSAL_SCHEMA}"
-    )
+    checklist = f"\n{evidence_checklist(ctx)}\n" if scaffold_on() else ""
+    user = ctx.render() + f"{checklist}\n{task}\nRespond with ONLY JSON matching:\n{PROPOSAL_SCHEMA}"
 
     def parse(raw: dict[str, Any]) -> Proposal:
         raw = _clean_ids(raw, "cited_evidence", "requested_probes")
@@ -463,8 +474,8 @@ def continuity_guardian_turn(ctx: TurnContext, proposal: Proposal) -> TurnRecord
         + f"\nPROPOSAL UNDER REVIEW (round {ctx.round}): candidate {proposal.candidate_id}. "
         f"Rationale: {proposal.rationale} Cited: {proposal.cited_evidence}. "
         f"Expected effect: {proposal.expected_effect}\n\n"
-        f"{evidence_checklist(ctx)}\n\n"
-        "YOUR TASK: Review this proposal against the business invariants."
+        + (f"{evidence_checklist(ctx)}\n\n" if scaffold_on() else "")
+        + "YOUR TASK: Review this proposal against the business invariants."
         f"\nRespond with ONLY JSON matching:\n{REVIEW_SCHEMA}"
     )
 
@@ -484,7 +495,7 @@ def continuity_guardian_turn(ctx: TurnContext, proposal: Proposal) -> TurnRecord
         parse,
         lambda r: ground_review(r, ctx),
     )
-    if rec.parsed is not None:
+    if rec.parsed is not None and scaffold_on():
         enforced = enforce_business_invariants(rec.parsed, proposal, ctx)
         if enforced.decision != rec.parsed.decision:
             rec.grounding.overridden = enforced.objection

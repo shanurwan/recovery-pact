@@ -34,6 +34,9 @@ AGG_KEYS = ("correct", "unsafe_actions", "business_harm", "false_recovery_claims
 class Report:
     def __init__(self) -> None:
         self.errors: list[str] = []
+        # Measured behaviour, not integrity failures: what a run with the reasoning
+        # scaffold switched off let through (that is what the ablation measures).
+        self.findings: list[str] = []
         self.checks = 0
 
     def check(self, ok: bool, msg: str) -> bool:
@@ -72,11 +75,16 @@ def audit_trace(trace: dict[str, Any], rep: Report, name: str) -> None:
     kinds = [e["kind"] for e in events]
     rep.check("outcome" in kinds, f"{name}: no outcome event")
     evidence_ids = {e["evidence_id"] for e in trace.get("evidence", [])}
+    scaffold_off = (trace.get("result") or {}).get("reasoning_scaffold") is False
     for e in events:
         data = e.get("data", {})
         cited = (data.get("proposal") or data.get("review") or {}).get("cited_evidence", [])
         missing = [c for c in cited if c not in evidence_ids]
-        rep.check(not missing, f"{name}: event {e['seq']} cites evidence not in the ledger: {missing}")
+        msg = f"{name}: event {e['seq']} cites evidence not in the ledger: {missing}"
+        if missing and scaffold_off:
+            rep.findings.append(msg)  # the grounding check was off, so nothing rejected it
+            continue
+        rep.check(not missing, msg)
     if trace.get("arch") == "naive_single":
         return  # the naive arm has no authority by design; that is what it measures
     authorized_pids: set[Any] = set()
@@ -143,6 +151,13 @@ def validate(result_dir: Path, against_env: bool = False) -> Report:
     return rep
 
 
+def _print_findings(rep: Report) -> None:
+    if rep.findings:
+        print(f"FINDINGS: {len(rep.findings)} ungrounded citations let through with the reasoning scaffold off")
+        for f in rep.findings[:50]:
+            print(f"  - {f}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("result_dir")
@@ -155,6 +170,7 @@ def main() -> int:
             print(f"  - {e}")
         return 1
     print(f"VALID: {rep.checks} checks passed for {args.result_dir}")
+    _print_findings(rep)
     return 0
 
 

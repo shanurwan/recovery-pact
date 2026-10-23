@@ -18,6 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.config import get_settings
 from app.integrations.nemotron.client import get_inference_client
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,10 @@ def audit(trace: str, workload_names: list[str], call_key: str) -> tuple[AuditRe
     user = f"TRACE:\n{trace}\n\nRespond with ONLY JSON matching:\n{AUDITOR_SCHEMA}"
     for attempt in (1, 2):
         try:
-            raw, m = client.complete_json(system=AUDITOR_SYSTEM, user=user, call_key=f"{call_key}-a{attempt}")
+            raw, m = client.complete_json(
+                system=AUDITOR_SYSTEM, user=user, call_key=f"{call_key}-a{attempt}",
+                model=get_settings().model_for("auditor"),
+            )
             metrics.append(m)
             rep = AuditReport.model_validate(raw)
         except (ValidationError, ValueError, KeyError, TypeError) as exc:

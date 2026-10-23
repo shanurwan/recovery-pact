@@ -56,6 +56,7 @@ from app.incidents.scenarios import get_spec
 from app.integrations.nemotron.client import get_inference_client
 from app.integrations.zetaris.business import get_business_context
 from app.memory.hmem import get_hmem
+from app.observability import trace_log
 from app.schemas.contract import AgreementRecord, BusinessConstraint, ProposedAction, RecoveryContract
 from app.schemas.enums import (
     Architecture,
@@ -79,6 +80,17 @@ RUN_LOCK_KEY = 74202026  # pg advisory lock: one incident per database at a time
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# A guardian turn that fails closes the negotiation either way; the trace says why,
+# so a provider outage is never mistaken for a reasoning failure (or the reverse).
+FAIL_TITLE = {"provider_error": "got no answer from the model provider", "ungrounded": "failed grounding twice"}
+FAIL_BRIEF = {"provider_error": "could not reach its model to produce", "ungrounded": "could not produce"}
+
+
+def _fail_reason(rec: Any) -> str:
+    problems = rec.grounding.problems if rec.grounding else []
+    return "provider_error" if any(str(p).startswith("inference unavailable") for p in problems) else "ungrounded"
 
 
 @dataclass
@@ -112,7 +124,7 @@ class PactRun:
             ev = RunEvent(seq=len(self.events) + 1, kind=kind, actor=actor, title=title, data=_jsonable(data))
             self.events.append(ev)
             self._cond.notify_all()
-        logger.info("[%s] %s/%s: %s", self.run_id, actor, kind, title)
+        trace_log.append(self.run_id, ev)
         return ev
 
     def wait_events(self, after: int, timeout: float = 15.0) -> list[RunEvent]:
@@ -206,6 +218,7 @@ class Orchestrator:
         self.requested_by_cg: set[str] = set()
         self.contract_versions = 0
         self.negotiations = 0
+        self.guard_flags: list[dict[str, Any]] = []
         self._probed: set[tuple[int, int, str]] = set()
         self.t0 = time.time()
 
@@ -313,6 +326,7 @@ class Orchestrator:
         lock = probe_lock_graph(run.ledger)
         tel = probe_checkout_health(run.ledger)
         run.emit("evidence", "observer", lock.summary, evidence=lock)
+        self._note_guard(lock)
         run.emit("evidence", "observer", tel.summary, evidence=tel)
         if run.arch == Architecture.PACT:
             imp = probe_impact(run.ledger, requested_by=CONTINUITY_GUARDIAN, window_s=10)
@@ -375,6 +389,17 @@ class Orchestrator:
             call_key_prefix=self._call_prefix(),
         )
 
+    def _note_guard(self, ev: Any) -> None:
+        for g in (ev.facts or {}).get("guard", []) if ev else []:
+            self.guard_flags.append(g | {"evidence_id": ev.evidence_id})
+            self.run.emit(
+                "guard",
+                "injection_guard",
+                f"Quarantined untrusted text in {g['field']} ({ev.evidence_id}): read as instructions to an AI agent",
+                detection=g,
+                evidence_id=ev.evidence_id,
+            )
+
     def _call_prefix(self) -> str:
         renego = f"-n{self.negotiations}" if self.negotiations > 1 else ""
         return f"{self.run.scenario.value}/{self.run.arch.value}/{self.run.slot}{renego}"
@@ -408,7 +433,8 @@ class Orchestrator:
                 actor = "zetaris" if ev.source in ("zetaris", "local_federation_fallback") else "observer"
                 self.run.emit("probe", actor, f"{requested_by} requested {p}: {ev.summary}", evidence=ev,
                               requested_by=requested_by)
-        if ran:
+                self._note_guard(ev)
+        if ran and self.settings.reasoning_scaffold:
             trade = derive_tradeoff(self.run.ledger)
             if trade:
                 self.run.emit("evidence", "business_calculator", trade.summary, evidence=trade)
@@ -435,10 +461,15 @@ class Orchestrator:
             prec = database_guardian_turn(ctx, revising=review is not None)
             self._account(prec)
             if prec.failed:
-                run.emit("grounding", "grounding_check", "Database Guardian failed grounding twice", metrics=prec.metrics)
-                return self._escalation("Database Guardian could not produce a grounded proposal", proposal, review)
+                reason = _fail_reason(prec)
+                run.emit("grounding", "grounding_check", f"Database Guardian {FAIL_TITLE[reason]}; failing closed",
+                         metrics=prec.metrics, reason=reason, problems=prec.grounding.problems)
+                return self._escalation(f"Database Guardian {FAIL_BRIEF[reason]} a grounded proposal", proposal, review)
             proposal = prec.parsed
             cand = ctx.candidate(proposal.candidate_id)
+            if cand is None:
+                run.emit("grounding", "orchestrator", f"Proposal names a target that was never observed: {proposal.candidate_id}")
+                return self._escalation("proposal named a target that was never observed", proposal, review)
             run.emit(
                 "proposal",
                 DB_GUARDIAN,
@@ -480,8 +511,10 @@ class Orchestrator:
             rrec = continuity_guardian_turn(ctx, proposal)
             self._account(rrec)
             if rrec.failed:
-                run.emit("grounding", "grounding_check", "Continuity Guardian failed grounding twice", metrics=rrec.metrics)
-                return self._escalation("Continuity Guardian could not produce a grounded review", proposal, review)
+                reason = _fail_reason(rrec)
+                run.emit("grounding", "grounding_check", f"Continuity Guardian {FAIL_TITLE[reason]}; failing closed",
+                         metrics=rrec.metrics, reason=reason, problems=rrec.grounding.problems)
+                return self._escalation(f"Continuity Guardian {FAIL_BRIEF[reason]} a grounded review", proposal, review)
             review = rrec.parsed
             if rrec.grounding.overridden:
                 run.emit("override", "grounding_check", "Business invariant override", detail=rrec.grounding.overridden)
@@ -764,6 +797,9 @@ class Orchestrator:
             return
         p: Proposal = rec.parsed
         cand = ctx.candidate(p.candidate_id)
+        if cand is None:
+            self._finish(Outcome.ESCALATED, action={"kind": "ESCALATE", "executed": False})
+            return
         run.emit("proposal", SOLO_AGENT, f"Solo agent chooses {p.candidate_id}", proposal=p, candidate=cand, metrics=rec.metrics)
         if cand.kind == CandidateKind.ESCALATE:
             self._finish(Outcome.ESCALATED, action={"kind": "ESCALATE", "executed": False})
@@ -870,6 +906,9 @@ class Orchestrator:
             "duration_s": round(time.time() - self.t0, 1),
             "recalled_memories": len(self.recalled),
             "contract_versions": self.contract_versions,
+            "injection_flagged": bool(self.guard_flags),
+            "guard_flags": self.guard_flags,
+            "reasoning_scaffold": self.settings.reasoning_scaffold,
             **{k: v for k, v in extra.items() if k not in ("action", "claimed_recovered")},
         }
         if isinstance(run.result.get("brief"), HumanBrief):
@@ -980,7 +1019,7 @@ class Orchestrator:
         elif outcome in (Outcome.ESCALATED, Outcome.DENIED):
             headline = (run.result.get("brief") or {}).get("headline", "")
             # Our own failures (grounding, inference) say nothing about the workload.
-            if "could not produce" not in headline and "inference" not in headline:
+            if not any(m in headline for m in ("could not produce", "could not reach", "inference")):
                 content = f"Pact for {app} (job {job}) ended {outcome.value}: {headline}"
                 writes.append((content, f"escalate:{app}", outcome.value.lower(), 0.7))
         if self.requested_by_cg and kind == "TERMINATE":
@@ -1084,11 +1123,13 @@ def start_run(scenario: IncidentScenario, arch: Architecture, use_memory: bool =
     return run
 
 
-def run_blocking(scenario: IncidentScenario, arch: Architecture, use_memory: bool = True, slot: str = "main") -> PactRun:
-    """Used by the eval harness: non-interactive, returns when done."""
+def run_blocking(
+    scenario: IncidentScenario, arch: Architecture, use_memory: bool = True, slot: str = "main", run_id: str | None = None
+) -> PactRun:
+    """Used by the eval harness and POST /run: non-interactive, returns when done."""
     with run_store.busy:
         run = PactRun(
-            run_id=f"run-{uuid.uuid4().hex[:10]}",
+            run_id=run_id or f"run-{uuid.uuid4().hex[:10]}",
             scenario=scenario,
             arch=arch,
             use_memory=use_memory,

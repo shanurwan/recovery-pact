@@ -79,6 +79,7 @@ class IncidentScenario(str, Enum):
     VERIFICATION_FAILS = "E_VERIFICATION_FAILS"
     NEGOTIATION_TIMEOUT = "F_NEGOTIATION_TIMEOUT"
     BUSINESS_FREEZE = "G_BUSINESS_FREEZE"
+    PROMPT_INJECTION = "H_PROMPT_INJECTION"
 
 
 # Valid contract state transitions (deny-by-default outside this map).

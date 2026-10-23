@@ -12,13 +12,28 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.config import get_settings
 from app.db.session import get_observer_engine, session_scope
+from app.integrations.nemotron.guard import get_guard
 from app.integrations.zetaris.business import BusinessAnswer, get_business_context
 from app.schemas.enums import CandidateKind
 from app.schemas.pact import Candidate, Evidence
 from app.services.checkout import health_snapshot
 
 REPLAYABLE_APP_PREFIX = "batch_replayable_"
+
+
+def untrusted(text_: str | None, field: str, guard_log: list[dict[str, Any]]) -> str:
+    """Screen text an outsider could have written before any agent reads it."""
+    text_ = text_ or ""
+    s = get_settings()
+    if not (s.reasoning_scaffold and s.guard_enabled) or not text_.strip():
+        return text_
+    v = get_guard().screen(text_)
+    if not v.unsafe:
+        return text_
+    guard_log.append({"field": field, "model": v.model, "verdict": v.raw, "error": v.error, "excerpt": text_[:160]})
+    return f"[QUARANTINED by Nemotron safety guard: the {field} contained instructions addressed to an AI agent]"
 
 
 def classify_workload(usename: str | None, application_name: str | None) -> str:
@@ -95,7 +110,7 @@ def probe_lock_graph(ledger: EvidenceLedger, requested_by: str = "orchestrator")
                   blocking.usename AS blocking_user,
                   blocking.application_name AS blocking_app,
                   blocking.state AS blocking_state,
-                  LEFT(blocking.query, 120) AS blocking_query,
+                  LEFT(blocking.query, 600) AS blocking_query,
                   EXTRACT(EPOCH FROM (now() - blocking.xact_start)) AS blocking_xact_age_s
                 FROM pg_stat_activity blocked
                 JOIN pg_locks bl ON bl.pid = blocked.pid AND NOT bl.granted
@@ -139,10 +154,13 @@ def probe_lock_graph(ledger: EvidenceLedger, requested_by: str = "orchestrator")
         root["blocked_sessions"] += 1
 
     waiters = len(blocked_pids)
+    guard_log: list[dict[str, Any]] = []
+    for b in roots.values():
+        b["query"] = untrusted(b.get("query"), "session query text", guard_log)
     if roots:
         parts = [
             f"pid {b['pid']} ({b['usename']}/{b['application_name']}, {b['state']}, "
-            f"txn open {b['xact_age_s']}s) blocks {b['blocked_sessions']} session(s)"
+            f"txn open {b['xact_age_s']}s) blocks {b['blocked_sessions']} session(s); last statement: {b['query'][:400]}"
             for b in roots.values()
         ]
         summary = f"{waiters} session(s) waiting on locks. Root blocker(s): " + "; ".join(parts)
@@ -152,7 +170,7 @@ def probe_lock_graph(ledger: EvidenceLedger, requested_by: str = "orchestrator")
         probe="db.lock_graph",
         source="postgresql_observer",
         summary=summary,
-        facts={"root_blockers": list(roots.values()), "waiting_sessions": waiters},
+        facts={"root_blockers": list(roots.values()), "waiting_sessions": waiters, "guard": guard_log},
         requested_by=requested_by,
     )
 
@@ -225,7 +243,9 @@ def probe_workload_registry(
     ans = get_business_context().workload_registry(app_names)
     known = {r["application_name"] for r in ans.records}
     parts = []
+    guard_log: list[dict[str, Any]] = []
     for r in ans.records:
+        r["business_purpose"] = untrusted(r.get("business_purpose"), "registry business_purpose", guard_log)
         cost = r.get("replay_cost_minutes")
         parts.append(
             f"{r['application_name']} = job '{r['job_name']}' owned by {r['owner_team']}, "
@@ -237,13 +257,18 @@ def probe_workload_registry(
     for name in app_names:
         if name not in known:
             parts.append(f"{name}: NOT FOUND in the workload registry (owner and cost unknown).")
-    return _biz_evidence(ledger, "biz.workload_registry", ans, " | ".join(parts), requested_by)
+    ev = _biz_evidence(ledger, "biz.workload_registry", ans, " | ".join(parts), requested_by)
+    ev.facts["guard"] = guard_log
+    return ev
 
 
 def probe_change_calendar(
     ledger: EvidenceLedger, app_names: list[str], requested_by: str
 ) -> Evidence:
     ans = get_business_context().change_calendar(app_names)
+    guard_log: list[dict[str, Any]] = []
+    for r in ans.records:
+        r["reason"] = untrusted(r.get("reason"), "change-calendar reason", guard_log)
     if ans.records:
         summary = " | ".join(
             f"ACTIVE {r['change_id']} on job '{r['scope']}' ({r['application_name']}): "
@@ -252,7 +277,9 @@ def probe_change_calendar(
         )
     else:
         summary = "No active change-calendar window covers " + ", ".join(app_names) + "."
-    return _biz_evidence(ledger, "biz.change_calendar", ans, summary, requested_by)
+    ev = _biz_evidence(ledger, "biz.change_calendar", ans, summary, requested_by)
+    ev.facts["guard"] = guard_log
+    return ev
 
 
 def probe_impact(ledger: EvidenceLedger, requested_by: str, window_s: int = 30) -> Evidence:

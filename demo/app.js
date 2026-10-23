@@ -13,7 +13,7 @@ const SIDES = {
 const WHO_CLASS = {
   database_guardian: "db", solo_agent: "db", continuity_guardian: "biz", recovery_auditor: "biz",
   zetaris: "biz", business_calculator: "biz", authority: "gate", grounding_check: "gate",
-  verifier: "gate", eval_judge: "gate", simulator: "bad", detector: "bad", executor: "gate",
+  verifier: "gate", eval_judge: "gate", simulator: "bad", detector: "bad", executor: "gate", injection_guard: "gate",
 };
 
 const state = { index: null, scenario: null, left: "naive_single", data: {}, clock: Infinity, playing: false, raf: 0 };

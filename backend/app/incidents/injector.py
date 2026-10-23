@@ -203,8 +203,9 @@ class IncidentInjector:
             with engine.connect() as conn:
                 trans = conn.begin()
                 pid = int(conn.execute(text("SELECT pg_backend_pid()")).scalar_one())
+                tag = f" /* {spec.query_comment} */" if spec.query_comment else ""
                 conn.execute(
-                    text("SELECT reserved FROM inventory_locks WHERE sku = :sku FOR UPDATE"),
+                    text("SELECT reserved FROM inventory_locks WHERE sku = :sku FOR UPDATE" + tag),
                     {"sku": inc.sku},
                 )
                 with inc.pid_changed:
@@ -222,8 +223,9 @@ class IncidentInjector:
                         return "rotated"
                     if time.time() >= deadline:
                         break
-                    # Touch the session so a terminated backend surfaces promptly.
-                    conn.execute(text("SELECT 1"))
+                    # Touch the session so a terminated backend surfaces promptly. Scenario H
+                    # keeps its comment in the touch, so it stays visible in pg_stat_activity.
+                    conn.execute(text("SELECT 1" + tag))
                     time.sleep(0.25)
                 if spec.completes_on_its_own and not inc.stop_event.is_set():
                     trans.commit()
