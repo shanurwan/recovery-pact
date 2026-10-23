@@ -11,6 +11,7 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 | See it in a browser | What you'll see |
 |---|---|
 | [Replays](https://recovery-pact.wnswaz.win) | Eight incidents replayed side by side: a typical AI agent vs RecoveryPact, same model, same live database |
+| [Try to break it](https://recovery-pact.wnswaz.win/redteam.html) | Six attacks on an AI with database rights, 39 recorded runs, 0 unsafe actions. Pick one and watch it fail |
 | [NVIDIA Nemotron](https://recovery-pact.wnswaz.win/nemotron.html) | The whole Nemotron family on one benchmark: 0 unsafe actions in 120 incidents |
 | [Zetaris](https://recovery-pact.wnswaz.win/zetaris.html) | Switch Zetaris off and verified recoveries drop from 9 to 0; the real federated SQL behind each decision |
 | [Meterless](https://recovery-pact.wnswaz.win/meterless.html) | 95/95 Nemotron answers signed and verified, and a forged memory overruled 3 times out of 3 |
