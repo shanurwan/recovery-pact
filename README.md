@@ -8,6 +8,14 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 
 **▶ Watch it, no install: [recovery-pact.wnswaz.win](https://recovery-pact.wnswaz.win)**. These are real recorded runs, a typical AI agent next to RecoveryPact on the same incident.
 
+| See it in a browser | What you'll see |
+|---|---|
+| [Replays](https://recovery-pact.wnswaz.win) | Eight incidents replayed side by side: a typical AI agent vs RecoveryPact, same model, same live database |
+| [NVIDIA Nemotron](https://recovery-pact.wnswaz.win/nemotron.html) | The whole Nemotron family on one benchmark: 0 unsafe actions in 120 incidents |
+| [Zetaris](https://recovery-pact.wnswaz.win/zetaris.html) | Switch Zetaris off and verified recoveries drop from 9 to 0; the real federated SQL behind each decision |
+| [Meterless](https://recovery-pact.wnswaz.win/meterless.html) | 95/95 Nemotron answers signed and verified, and a forged memory overruled 3 times out of 3 |
+| [Cursor](https://recovery-pact.wnswaz.win/cursor.html) | Post-incident review inside the IDE, built with Cursor |
+
 ---
 
 ## The problem
@@ -130,7 +138,7 @@ Eight incident scenarios, each run through three architectures, **three independ
 
 **Requirements:** Docker with Compose v2 and Python 3.9+ (standard library only, for `run.py`). No API key is needed: without one, RecoveryPact replays recorded Nemotron decisions while the database, authority, executor and verifier run live.
 
-### Judge quickstart (two minutes, no key)
+### Quickstart (no API key)
 
 ```bash
 git clone https://github.com/shanurwan/recovery-pact.git && cd recovery-pact

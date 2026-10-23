@@ -21,7 +21,7 @@
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, small ? 1.25 : 1.75));
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x070d1a, 0.045);
+  scene.fog = new THREE.FogExp2(0x08090b, 0.045);
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
   camera.position.set(0, 1.2, small ? 15 : 12);
 
@@ -45,22 +45,22 @@
   const dot = dotTexture();
 
   const C = {
-    ok: new THREE.Color(0x3ee6a5),
-    bad: new THREE.Color(0xff4d5e),
-    db: new THREE.Color(0x5aa8ff),
-    biz: new THREE.Color(0x3ee6a5),
-    gate: new THREE.Color(0xffb547),
+    ok: new THREE.Color(0x76b900),
+    bad: new THREE.Color(0xff5f57),
+    db: new THREE.Color(0x7ea6d8),
+    biz: new THREE.Color(0x76b900),
+    gate: new THREE.Color(0xf2b441),
   };
 
   // Core: the database
   const core = new THREE.Mesh(
     new THREE.IcosahedronGeometry(1.15, 2),
-    new THREE.MeshBasicMaterial({ color: 0x5aa8ff, wireframe: true, transparent: true, opacity: 0.55 })
+    new THREE.MeshBasicMaterial({ color: 0x7ea6d8, wireframe: true, transparent: true, opacity: 0.55 })
   );
   world.add(core);
   const glow = new THREE.Mesh(
     new THREE.SphereGeometry(0.85, 32, 32),
-    new THREE.MeshBasicMaterial({ color: 0x1b4f9a, transparent: true, opacity: 0.55 })
+    new THREE.MeshBasicMaterial({ color: 0x1d2a12, transparent: true, opacity: 0.55 })
   );
   world.add(glow);
 
@@ -123,7 +123,7 @@
     sp[i * 3 + 2] = -10 - Math.random() * 40;
   }
   starGeo.setAttribute("position", new THREE.BufferAttribute(sp, 3));
-  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 0.12, map: dot, color: 0x8fa6cc, transparent: true, opacity: 0.45, depthWrite: false })));
+  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 0.12, map: dot, color: 0x9aa0a6, transparent: true, opacity: 0.45, depthWrite: false })));
 
   // Health 1 = flowing and green; 0 = stalled and red. Eased toward the target.
   let health = 1, target = 1;
@@ -187,7 +187,7 @@
     core.rotation.y += dt * (0.15 + 0.35 * health);
     core.rotation.x += dt * 0.05;
     core.material.color.copy(C.db).lerp(C.bad, (1 - health) * 0.8);
-    glow.material.color.setHex(0x1b4f9a).lerp(new THREE.Color(0x5a1420), (1 - health) * 0.9);
+    glow.material.color.setHex(0x1d2a12).lerp(new THREE.Color(0x5a1420), (1 - health) * 0.9);
     const pulse = 1 + Math.sin(t * (health < 0.6 ? 6 : 1.6)) * (health < 0.6 ? 0.06 : 0.025);
     glow.scale.setScalar(pulse);
     ringDb.rotation.z += dt * 0.35;

@@ -31,7 +31,7 @@ xychart-beta
     bar [24, 6, 3]
 ```
 
-**What a judge can verify in two minutes, without an API key:**
+**How each claim is backed:**
 
 | Claim | Evidence | Check it |
 |---|---|---|
