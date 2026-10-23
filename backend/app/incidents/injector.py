@@ -23,6 +23,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from app.config import get_settings
+from app.db import get_observer_engine
 from app.incidents.scenarios import ScenarioSpec, get_spec
 from app.schemas.enums import IncidentScenario
 
@@ -143,7 +144,26 @@ class IncidentInjector:
             )
         inc.metadata["stale_pid"] = old_pid
         inc.metadata["identity_rotated"] = True
+        self._wait_until_blocking(inc.blocker_pid, timeout)
         return {"old_pid": old_pid, "new_pid": inc.blocker_pid}
+
+    @staticmethod
+    def _wait_until_blocking(pid: int | None, timeout: float) -> None:
+        """Return once checkout has queued behind the reconnected blocker again.
+
+        Without this, a fast re-observation can land in the gap between the old
+        backend releasing its lock and the waiters re-queueing, and see no incident.
+        """
+        if pid is None:
+            return
+        deadline = time.time() + timeout
+        with get_observer_engine().connect() as conn:
+            while time.time() < deadline:
+                if conn.execute(text("SELECT count(*) FROM pg_stat_activity WHERE :pid = ANY(pg_blocking_pids(pid))"),
+                                {"pid": pid}).scalar_one():
+                    return
+                time.sleep(0.1)
+        logger.warning("reconnected blocker pid %s is not blocking anyone after %.0fs", pid, timeout)
 
     # ------------------------------------------------------------------ holder
 
