@@ -275,10 +275,10 @@ Memory is weak evidence by design. It may change what the guardians check first,
 - **Served through Meterless Nightshift** by default, or through the NVIDIA NIM API directly (`AI_PROVIDER=nvidia`).
 
 ### Cursor: post-incident review in the IDE
-Cursor's CLI agent built [`tools/recoverypact-mcp`](tools/recoverypact-mcp/README.md), a read-only MCP server registered in `.cursor/mcp.json`: `list_runs`, `explain_run`, `compare_arms`, `validate_results`, `verify_receipts`. Ask Cursor *"why did the pact refuse to kill the settlement in incident B?"* and it answers from the run record, the validator and the signed receipts. It can't start an incident or call the executor. Prompts and a real transcript: [`docs/cursor.md`](docs/cursor.md).
+Cursor's CLI agent, running xAI's Grok 4.7, built [`tools/recoverypact-mcp`](tools/recoverypact-mcp/README.md), a read-only MCP server registered in `.cursor/mcp.json`: `list_runs`, `explain_run`, `compare_arms`, `validate_results`, `verify_receipts`. Ask Cursor *"why did the pact refuse to kill the settlement in incident B?"* and it answers from the run record, the validator and the signed receipts. It can't start an incident or call the executor. Prompts and a real transcript: [`docs/cursor.md`](docs/cursor.md).
 
 ### Development tools
-Cursor is the project's AI development tool: its agent built and tested the RecoveryPact MCP server above, and `.cursor/rules/recoverypact.mdc` holds the project rules every Cursor session follows (safety boundaries, results treated as evidence, scoped commits). The Meterless Engine requirement is met by H-MEM: it runs in every pact and passes Meterless's conformance suite.
+Cursor (with xAI's Grok 4.7 as the agent model) is the project's AI development tool: its agent built and tested the RecoveryPact MCP server above, and `.cursor/rules/recoverypact.mdc` holds the project rules every Cursor session follows (safety boundaries, results treated as evidence, scoped commits). The Meterless Engine requirement is met by H-MEM: it runs in every pact and passes Meterless's conformance suite.
 
 ### What was unique about our use of the sponsors
 - **Every sponsor is load-bearing, and we measured it by taking it away or attacking it.** Switch Zetaris off and verified recoveries drop from 9 to 0. Plant a forged memory in H-MEM and live Zetaris facts overrule it 3 times out of 3. Every number is recomputed from raw traces by an independent validator.

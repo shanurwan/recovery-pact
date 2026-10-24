@@ -2,7 +2,7 @@
 
 How Cursor was used to build `tools/recoverypact-mcp`: a read-only MCP server so an
 SRE can ask *why* a pact run waited or refused an action, and get an answer from the
-published eval evidence — not a guess.
+published eval evidence — not a guess. The Cursor agent ran on xAI's Grok 4.7.
 
 ## Prompts given
 
