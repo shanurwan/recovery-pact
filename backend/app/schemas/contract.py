@@ -109,6 +109,11 @@ class RecoveryContract(BaseModel):
     content_digest: str = ""
     denial_reason: str | None = None
     escalation_reason: str | None = None
+    # The model calls whose answers this contract rests on (the final proposal and the
+    # accepting review): response id, served model, token counts. Sealed into the digest,
+    # checked against Nightshift's signed receipts by authority rule I8.
+    model_provenance: list[dict[str, Any]] = Field(default_factory=list)
+    human_approved: bool = False
 
     @field_validator("maximum_execution_count")
     @classmethod

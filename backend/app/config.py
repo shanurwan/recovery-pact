@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     # --- Authority ---
     authority_ttl_seconds: int = 120
     authority_max_executions: int = 1
+    # Rule I8, signed provenance: every model answer a contract rests on must carry a
+    # valid Nightshift receipt (app/integrations/meterless/receipts.py). On for every
+    # Nightshift run; off when models are called on the NVIDIA API directly.
+    receipt_gate: bool = False
+    meterless_receipts_url: str = ""  # the read-only relay next to Nightshift
+    meterless_receipt_key: str = ""  # Nightshift's public key (base64) or its 16-hex fingerprint
+    receipt_models: str = "nvidia/nemotron"  # allowed model prefixes, comma-separated
+    receipt_egress: str = "nvidia,local"  # allowed prompt destinations
 
     # --- Demo ---
     checkout_timeout_ms: int = 3000
@@ -129,6 +137,14 @@ class Settings(BaseSettings):
 
     def meterless_route(self, model: str) -> str:
         return self.meterless_route_map.get(model, self.meterless_model)
+
+    @property
+    def receipt_model_prefixes(self) -> list[str]:
+        return [p.strip() for p in self.receipt_models.split(",") if p.strip()]
+
+    @property
+    def receipt_egress_allowed(self) -> set[str]:
+        return {d.strip() for d in self.receipt_egress.split(",") if d.strip()}
 
     def model_for(self, role: str) -> str:
         return getattr(self, f"model_{role}", "") or self.nemotron_model

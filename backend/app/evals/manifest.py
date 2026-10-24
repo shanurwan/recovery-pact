@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, text
 
 from app.config import get_settings
 from app.incidents.scenarios import SCENARIOS
+from app.integrations.meterless import receipts
 from app.integrations.nemotron.client import get_inference_client
 from app.integrations.zetaris.business import get_business_context
 from app.memory.hmem import get_hmem
@@ -89,5 +90,10 @@ def build_manifest() -> dict[str, Any]:
         "embedder": getattr(get_hmem().embedder, "name", ""),
         "recall_threshold": s.hmem_recall_threshold,
         "traffic_rps": s.traffic_rps,
+        "ai_provider": s.ai_provider,
+        "meterless_routes": {"default": s.meterless_model, **s.meterless_route_map} if s.ai_provider == "meterless" else None,
+        "receipt_gate": {"enabled": s.receipt_gate, "key": receipts.key_fingerprint(s.meterless_receipt_key)
+                         if len(s.meterless_receipt_key) > 16 else s.meterless_receipt_key,
+                         "models": s.receipt_model_prefixes, "egress": sorted(s.receipt_egress_allowed)},
         "python": platform.python_version(),
     }

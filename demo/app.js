@@ -4,6 +4,12 @@
 const REPO = "https://github.com/shanurwan/recovery-pact/blob/main/";
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const nemotronName = (m) => {
+  const x = /nemotron-([\d.]+)-([a-z]+)/.exec(m || "");
+  return x ? `Nemotron ${x[1]} ${x[2][0].toUpperCase()}${x[2].slice(1)}` : (m || "").replace("nvidia/", "");
+};
+// A verified Meterless Nightshift receipt for this model answer.
+const sigBadge = (e) => e.signed ? ` <span class="sig" title="Meterless Nightshift receipt: Ed25519 signature verified (key ${esc(e.signed.key)}); the prompt went to: ${esc(e.signed.egress)}">✓ signed · ${esc(nemotronName(e.signed.winner))}</span>` : "";
 
 const SIDES = {
   naive_single: { name: "Typical AI agent", short: "Typical agent", sub: "One AI with database access fixes it on its own." },
@@ -127,7 +133,7 @@ function draw() {
     if (feed.childElementCount !== shown.length) {
       const tech = $("#tech").checked;
       feed.innerHTML = shown.map((e) => `<li><span class="ts">${e.t.toFixed(0)} s</span><div>
-          <span class="who ${WHO_CLASS[e.actor] || ""}">${esc(e.who)}</span> ${esc(e.caption)}
+          <span class="who ${WHO_CLASS[e.actor] || ""}">${esc(e.who)}</span> ${esc(e.caption)}${sigBadge(e)}
           <div class="tech" ${tech ? "" : "hidden"}>${esc(techText(e))}</div></div></li>`).join("");
       if (state.playing) feed.scrollTop = feed.scrollHeight;
     }

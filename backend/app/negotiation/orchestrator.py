@@ -88,6 +88,18 @@ FAIL_TITLE = {"provider_error": "got no answer from the model provider", "ungrou
 FAIL_BRIEF = {"provider_error": "could not reach its model to produce", "ungrounded": "could not produce"}
 
 
+PROVENANCE_KEYS = ("call_key", "provider", "route", "response_id", "served_by", "prompt_tokens", "completion_tokens")
+
+
+def _answers(*recs: Any) -> list[dict[str, Any]]:
+    """The model call each turn's parsed answer came from (its last attempt), for rule I8."""
+    out = []
+    for rec in recs:
+        if rec is not None and rec.metrics:
+            out.append({k: rec.metrics[-1].get(k) for k in PROVENANCE_KEYS})
+    return out
+
+
 def _fail_reason(rec: Any) -> str:
     problems = rec.grounding.problems if rec.grounding else []
     return "provider_error" if any(str(p).startswith("inference unavailable") for p in problems) else "ungrounded"
@@ -466,6 +478,7 @@ class Orchestrator:
                          metrics=prec.metrics, reason=reason, problems=prec.grounding.problems)
                 return self._escalation(f"Database Guardian {FAIL_BRIEF[reason]} a grounded proposal", proposal, review)
             proposal = prec.parsed
+            prop_rec = prec
             cand = ctx.candidate(proposal.candidate_id)
             if cand is None:
                 run.emit("grounding", "orchestrator", f"Proposal names a target that was never observed: {proposal.candidate_id}")
@@ -490,6 +503,7 @@ class Orchestrator:
                 if not irec.failed:
                     changed = irec.parsed.candidate_id != proposal.candidate_id
                     proposal = irec.parsed
+                    prop_rec = irec
                     cand = ictx.candidate(proposal.candidate_id)
                     run.emit(
                         "proposal",
@@ -542,7 +556,8 @@ class Orchestrator:
                     conditions=review.conditions,
                     acceptance_criteria=review.acceptance_criteria,
                 )
-                return {"kind": "agreed", "proposal": proposal, "review": review, "candidate": cand}
+                return {"kind": "agreed", "proposal": proposal, "review": review, "candidate": cand,
+                        "provenance": _answers(prop_rec, rrec)}
             if review.decision == ChallengeDecision.ESCALATE:
                 return self._escalation(review.objection or "Continuity Guardian escalated", proposal, review)
             if review.required_evidence:
@@ -569,11 +584,13 @@ class Orchestrator:
         if cand.kind == CandidateKind.WAIT:
             self._wait_and_verify()
             return
-        self._terminate_via_authority(cand, decision["proposal"], review, human_approved=False)
+        self._terminate_via_authority(cand, decision["proposal"], review, human_approved=False,
+                                      provenance=decision.get("provenance"))
 
     # ------------------------------------------------------------ execution
 
-    def _contract(self, cand: Candidate, proposal: Proposal | None, review: Review | None, human: bool) -> RecoveryContract:
+    def _contract(self, cand: Candidate, proposal: Proposal | None, review: Review | None, human: bool,
+                  provenance: list[dict[str, Any]] | None = None) -> RecoveryContract:
         app = cand.target.get("application_name")
         reg = self._registry_record(app)
         wl = reg.get("workload_class") if reg else classify_workload(cand.target.get("usename"), app)
@@ -614,6 +631,8 @@ class Orchestrator:
                     conditions=(["human approval"] if human else []) + (review.conditions if review else []),
                 )
             ],
+            model_provenance=list(provenance or []),
+            human_approved=human,
         )
         c.transition_to(ContractState.AGREED)
         c.transition_to(ContractState.SUBMITTED_FOR_AUTHORIZATION)
@@ -647,6 +666,20 @@ class Orchestrator:
                 forged_target=forged.exact_target,
             )
             return forged
+        if self.spec.adversarial_impersonated_model and contract.model_provenance:
+            real = contract.model_provenance[0]
+            spoofed = contract.model_copy(deep=True)
+            spoofed.model_provenance[0] = {**real, "response_id": f"chatcmpl-{uuid.uuid4()}"}
+            spoofed.seal()  # the impersonator controls the answer, so it seals a consistent contract
+            run.emit(
+                "adversary",
+                "simulator",
+                f"ADVERSARIAL TEST: the final proposal came from an endpoint impersonating the model provider "
+                f"(claims {real.get('served_by')})",
+                real_call=real,
+                spoofed_call=spoofed.model_provenance[0],
+            )
+            return spoofed
         return contract
 
     def _checkout_victim_pid(self) -> int | None:
@@ -660,9 +693,10 @@ class Orchestrator:
             ).scalar()
         return int(pid) if pid else (lock.facts["root_blockers"][0]["pid"] if lock else None)
 
-    def _terminate_via_authority(self, cand: Candidate, proposal: Proposal | None, review: Review | None, human_approved: bool) -> None:
+    def _terminate_via_authority(self, cand: Candidate, proposal: Proposal | None, review: Review | None, human_approved: bool,
+                                 provenance: list[dict[str, Any]] | None = None) -> None:
         run = self.run
-        contract = self._apply_hooks(self._contract(cand, proposal, review, human_approved))
+        contract = self._apply_hooks(self._contract(cand, proposal, review, human_approved, provenance))
         run.emit("contract", "pact", f"Recovery contract v{contract.version} sealed", contract=contract.model_dump(mode="json"))
         decision = authority_gate.evaluate(contract)
         run.emit(
@@ -816,13 +850,13 @@ class Orchestrator:
             )
             return
         if run.arch == Architecture.GATED_SINGLE:
-            self._solo_gated(cand, p)
+            self._solo_gated(cand, p, _answers(rec))
         else:
             self._solo_naive(cand, p)
 
-    def _solo_gated(self, cand: Candidate, p: Proposal) -> None:
+    def _solo_gated(self, cand: Candidate, p: Proposal, provenance: list[dict[str, Any]]) -> None:
         run = self.run
-        contract = self._apply_hooks(self._contract(cand, p, None, False))
+        contract = self._apply_hooks(self._contract(cand, p, None, False, provenance))
         decision = authority_gate.evaluate(contract)
         run.emit("authority", "authority", decision.reason, authorized=decision.authorized, checks=decision.checks)
         if not decision.authorized:

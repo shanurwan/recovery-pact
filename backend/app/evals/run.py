@@ -32,7 +32,7 @@ ENCORES = [IncidentScenario.SAFE_AUTONOMOUS, IncidentScenario.VERIFICATION_FAILS
 
 def _scenarios(arg: str) -> list[IncidentScenario]:
     if arg == "all":
-        return list(SCENARIOS)
+        return [s for s, spec in SCENARIOS.items() if spec.benchmark]
     wanted = {x.strip().upper() for x in arg.split(",")}
     return [s for s in SCENARIOS if s.value.split("_")[0] in wanted or s.value in wanted]
 

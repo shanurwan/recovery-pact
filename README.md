@@ -37,13 +37,13 @@ RecoveryPact splits the decision the way a well-run company would. This is a **s
 |---|---|---|---|
 | **Database Guardian** | LLM agent (Nemotron) | Restore PostgreSQL fast with the smallest blast radius | Proposes only |
 | **Continuity Guardian** | LLM agent (Nemotron) | Protect revenue, customers, in-flight money, owners' commitments; sees the business through **Zetaris** | Accepts, challenges, rejects, escalates |
-| **Authority** | Deterministic code | Is this exact action on this exact live target permitted? Single-use, time-boxed tokens | Grants or denies; never negotiates |
+| **Authority** | Deterministic code | Is this exact action on this exact live target permitted, and did Nemotron, provably, propose it? Checks Nightshift's signed receipts (I8). Single-use, time-boxed tokens | Grants or denies; never negotiates |
 | **Restricted Executor** | Deterministic code | Runs one typed command (`pg_terminate_backend`) under a least-privilege role | Only with a valid token |
 | **Verifier** | Deterministic code | Recovered = DB clear **and** checkout back above the SLO **and** no protected operation harmed | Judges the outcome |
 | **Recovery Auditor** | LLM agent (Nemotron) | Writes the post-incident report and distils lessons | Writes memory only |
 | **Meterless H-MEM** | Durable memory (Meterless Engine) | Remembers verified outcomes and what the counterpart required | Can veto a repeat, never permit |
 | **Nemotron injection guard** | Nemotron safety models | Screens untrusted database and business text before any agent reads it | Quarantines, never decides |
-| **Meterless Nightshift** | AI runtime (primary provider) | Serves every Nemotron call from the lanes configured in Nightshift | Routes models; holds the NVIDIA key |
+| **Meterless Nightshift** | AI runtime (primary provider) | Serves every Nemotron call from the lanes configured in Nightshift and signs a receipt for each | Routes models; holds the NVIDIA key; its receipts gate execution |
 
 The guardians never write SQL and never name a raw PID. They pick from **candidate actions enumerated from observed evidence**, cite **evidence ids** that a grounding check verifies, and request **probes** from a fixed menu. That is bounded autonomy at the reasoning level, before the authority even sees a contract.
 
@@ -62,6 +62,7 @@ flowchart LR
   DB -. grounded? .- G
   CG -- agreement --> C[Sealed Recovery Contract<br/>sha-256 digest]
   C --> A{Independent Authority<br/>deterministic}
+  NS[Nightshift signed receipts<br/>Ed25519] -. I8: who answered .-> A
   A -- denied --> X[Escalate with decision brief]
   A -- single-use token --> E[Restricted executor]
   E --> V{Verifier<br/>DB + business SLO + protected ops}
@@ -78,7 +79,7 @@ flowchart LR
 5. **Enforce.** Hard invariants are re-checked in code after the model decides, so an acceptance that breaks them never leaves the negotiation.
 6. At most 3 rounds. Then authority, execution, verification, audit and memory.
 
-### Business invariants
+### Invariants
 
 | | Rule | Enforced by |
 |---|---|---|
@@ -90,6 +91,7 @@ flowchart LR
 | I6 | Acceptance criteria come from the SLO (served by Zetaris); guardians may tighten, never loosen | code |
 | I7 | Waiting must fit inside the degradation the business tolerates (`max_degradation_s`) | model + code |
 | M1 | Memory of a verified-ineffective termination vetoes repeating it. Memory may veto, never permit | model + code |
+| I8 | Signed provenance: every model answer a contract rests on must carry a valid Meterless Nightshift receipt (pinned Ed25519 key, a Nemotron model, an allowed prompt destination, matching token counts, written during this incident) | authority (code) |
 
 ---
 
@@ -137,7 +139,7 @@ Eight incident scenarios, each run through three architectures, **three independ
 
 ## Run it
 
-**Requirements:** Docker with Compose v2 and Python 3.9+ (standard library only, for `run.py`). No API key is needed: without one, RecoveryPact replays recorded Nemotron decisions while the database, authority, executor and verifier run live.
+**Requirements:** Docker with Compose v2.24 or newer, and Python 3.9+ (standard library only, for `run.py`; use `python3` where `python` is not on the path). The `scripts/*.sh` helpers need bash (Git Bash on Windows). No API key is needed: without one, RecoveryPact replays recorded Nemotron decisions while the database, authority, executor and verifier run live.
 
 ### Quickstart (no API key)
 
@@ -167,6 +169,7 @@ Then open the operator console at http://localhost:8080. Pick an incident and wa
 | Mode | How | What runs live |
 |---|---|---|
 | **Meterless (primary)** | `AI_PROVIDER=meterless`, Nightshift running, `METERLESS_BASE_URL` and `METERLESS_RUNTIME_TOKEN` from the Nightshift Console | everything; each model call goes app → Meterless Runtime → a Nemotron lane in Nightshift |
+| **+ signed provenance (I8)** | also `RECEIPT_GATE=true`, `METERLESS_RECEIPTS_URL` (run `scripts/nightshift-receipt-relay.py` next to Nightshift) and `METERLESS_RECEIPT_KEY` (Nightshift's public key or its fingerprint) | the authority verifies Nightshift's receipt for each answer before acting |
 | Direct NVIDIA | `AI_PROVIDER=nvidia`, `NVIDIA_API_KEY=...` | everything, calling the NVIDIA NIM API directly |
 | Sample / replay | `SAMPLE_MODE=true`, or no credentials at all | everything except the model calls, which replay recorded Nemotron responses and are labeled as replays |
 | Zetaris live | `bash scripts/zetaris-setup.sh` with the Zetaris platform bundle running | the business context comes through Zetaris federation |
@@ -242,6 +245,14 @@ The business context lives in three systems that know nothing about each other. 
 - Auto Detect on ports 8088, 8090, 8787 and 11434;
 - a 180 s timeout.
 
+**Nightshift's signatures are a safety control, not just a log (rule I8).** With `RECEIPT_GATE=true`, the authority refuses to run anything unless the model answers behind the contract, the final proposal and the accepting review, each carry a Nightshift receipt that:
+- is signed by the pinned Nightshift key (Ed25519, verified in the authority);
+- names this exact call and says a **Nemotron** model answered, the same one the client was told;
+- shows the prompt went only where policy allows (`nvidia` or on the machine);
+- attests the same token counts the answer arrived with, and was written during this incident.
+
+The response ids are sealed into the contract digest, so they can't be swapped after agreement. A missing receipt, a relay that is down or an unpinned key all fail closed: escalate, never act. `scripts/nightshift-receipt-relay.py` serves the receipts read-only next to Nightshift; it can't forge one, because the authority checks every signature. The red-team incident **I · An impersonated model answers** (`--scenarios I`) tests exactly this: a proposal that passes every policy rule, which must be refused because nothing signed it. A receipt signs who answered, not the words, so the token counts are what tie the parsed answer to the signed call. Code: `backend/app/integrations/meterless/receipts.py`; tests: `tests/test_signed_provenance.py`, including a real receipt from our benchmark.
+
 Agents ask for a logical Nemotron model and `METERLESS_ROUTES` maps it to a Nightshift lane, for example Lightning to `meterless/fast` and Super to `meterless/deep`. The model Nightshift actually served is recorded with every call (`served_by` in each turn's metrics), and `scripts/nightshift-receipts.py` verifies Nightshift's Ed25519-signed receipt for each call offline, so the trace proves which Nemotron answered. Each call sends its own `meterless-scope` and `meterless-tier-split: off`, so Nightshift adds no memory of its own and returns one complete answer.
 
 **H-MEM is the guardians' memory** (`backend/app/memory/hmem.py`), a Python implementation of the Meterless H-MEM spec:
@@ -268,6 +279,14 @@ Cursor's CLI agent built [`tools/recoverypact-mcp`](tools/recoverypact-mcp/READM
 
 ### Development tools
 Cursor is the project's AI development tool: its agent built and tested the RecoveryPact MCP server above, and `.cursor/rules/recoverypact.mdc` holds the project rules every Cursor session follows (safety boundaries, results treated as evidence, scoped commits). The Meterless Engine requirement is met by H-MEM: it runs in every pact and passes Meterless's conformance suite.
+
+### What was unique about our use of the sponsors
+- **Every sponsor is load-bearing, and we measured it by taking it away or attacking it.** Switch Zetaris off and verified recoveries drop from 9 to 0. Plant a forged memory in H-MEM and live Zetaris facts overrule it 3 times out of 3. Every number is recomputed from raw traces by an independent validator.
+- **Nightshift's signed receipts decide what may run.** Most projects log which model answered. Here the authority refuses to touch the database unless a pinned-key Nightshift receipt proves a Nemotron model gave the answer (rule I8).
+- **Memory that may veto, never permit.** H-MEM, our own implementation passing Meterless's 13/13 conformance suite, stops a known-bad fix from being repeated, but no memory can authorize an action.
+- **Zetaris as the business's voice in a negotiation.** One federated SQL statement per business question, cited as evidence by an AI whose only mandate is the business, against an AI whose mandate is the database.
+- **The whole Nemotron family, compared on one benchmark,** plus Nemotron safety models screening every untrusted string from production before an agent reads it.
+- **Cursor turns the evidence into an IDE workflow:** a read-only MCP server so an engineer can ask "why did the pact refuse?" and get the answer from the trace, the validator and the receipts.
 
 ---
 
@@ -321,7 +340,7 @@ tests/           unit tests, Meterless conformance, e2e/ benchmark end-to-end
 
 ## Pre-existing components
 
-None. Built during the hackathon window (from 22 October 2026). Open-source libraries: FastAPI, SQLAlchemy, psycopg, Pydantic, httpx. The H-MEM implementation follows the public Meterless specification. `tests/meterless/vectors.json` is Meterless's conformance vector file, used unmodified under Apache-2.0. All data is synthetic and generated by the repository (seed SQL, CSV and scenario injectors).
+All RecoveryPact code was written during the hackathon window (first commit 22 October 2026, 04:30 UTC). What carried over is know-how, not code: the author's earlier personal projects database-guardian and mongodb-guardian (Go, before 22 October) explored a single database agent with a Zetaris REST client (login and SQL run-query flow) and a Go port of Meterless H-MEM. RecoveryPact is a new design (two guardians, a deterministic authority, verification, signed provenance) written from scratch in Python; no files or code were copied. Open-source libraries: FastAPI, SQLAlchemy, psycopg, Pydantic, httpx. The H-MEM implementation follows the public Meterless specification. `tests/meterless/vectors.json` is Meterless's conformance vector file, used unmodified under Apache-2.0. All data is synthetic and generated by the repository (seed SQL, CSV and scenario injectors).
 
 ## License
 

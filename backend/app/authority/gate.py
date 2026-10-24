@@ -19,6 +19,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db.session import get_observer_engine, session_scope
 from app.evidence.collector import classify_workload
+from app.integrations.meterless import receipts
 from app.schemas.contract import RecoveryContract
 from app.schemas.enums import ContractState, RemediationActionType, WorkloadClass
 
@@ -148,7 +149,12 @@ class AuthorityGate:
         count_ok = contract.maximum_execution_count >= 1
         check("execution_budget", count_ok, f"max={contract.maximum_execution_count}")
 
-        # 10. TTL will be stamped on authorization
+        # 10. I8 signed provenance: the model answers behind this contract were signed
+        #     by Nightshift (a Nemotron model, allowed destinations, matching tokens).
+        if settings.receipt_gate:
+            check("signed_provenance", *self._provenance(contract))
+
+        # 11. TTL will be stamped on authorization
         all_ok = all(c["passed"] for c in checks)
         if not all_ok:
             failed = [c["name"] for c in checks if not c["passed"]]
@@ -231,6 +237,18 @@ class AuthorityGate:
 
     def force_deny(self, reason: str) -> AuthzDecision:
         return AuthzDecision(authorized=False, authorization_id=None, reason=reason)
+
+    def _provenance(self, contract: RecoveryContract) -> tuple[bool, str]:
+        if contract.human_approved and not contract.model_provenance:
+            return True, "human-approved; no model answer to sign"
+        if not contract.model_provenance:
+            return False, "no model answer on record"
+        created_ms = int(contract.creation_timestamp.timestamp() * 1000)
+        results = receipts.verify_calls(contract.model_provenance, receipts.not_before(created_ms))
+        bad = [r for r in results if not r["ok"]]
+        if bad:
+            return False, "; ".join(f"{r.get('call_key')}: {', '.join(r['failed'])}" for r in bad)
+        return True, " · ".join(f"{r['receipt_id']} {r['winner']} -> {r['egress']} (key {r['key']})" for r in results)
 
     def _live_backend(self, pid: int | None) -> dict[str, Any] | None:
         if not pid:

@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.evals.build_demo import compact
+from app.evals.build_demo import compact, load_receipts
 
 RESULTS = Path("evals/results")
 
@@ -97,7 +97,7 @@ def jobs_of(trace: dict[str, Any]) -> dict[str, str]:
 def side(label: str, arch: str, scenario: str, memory_caption: str | None = None) -> dict[str, Any]:
     fname = f"r1-main-{arch}-{scenario}.json"
     trace = json.loads((RESULTS / label / "runs" / fname).read_text(encoding="utf-8"))
-    data = compact(trace, jobs_of(trace))
+    data = compact(trace, jobs_of(trace), load_receipts(RESULTS / label))
     if memory_caption:
         for e in data["events"]:
             if e["kind"] == "memory" and e["caption"]:
