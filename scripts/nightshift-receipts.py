@@ -11,7 +11,9 @@ signature is also verified offline (scripts/nightshift-verify-receipts.mjs).
     python scripts/nightshift-receipts.py evals/results/nightshift-verify \
         "%LOCALAPPDATA%/ai.meterless.runtime/receipts.jsonl" > evals/results/nightshift-verify/receipts.md
 
-Also writes receipts.json (the joined rows) next to the runs.
+Also writes receipts.json (the joined rows) and receipts.signed.jsonl (the signed
+envelopes of exactly those calls, unmodified) next to the runs, so anyone can
+re-verify every signature from the repository alone: python scripts/prove.py
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ def receipts(path: Path) -> dict[str, dict]:
         d = json.loads(line)
         r = d.get("body", {}).get("receipt", {})
         if r.get("request_id"):
-            out[r["request_id"]] = {**r, "_signed": bool(d.get("sig_b64") and d.get("pubkey_b64"))}
+            out[r["request_id"]] = {**r, "_signed": bool(d.get("sig_b64") and d.get("pubkey_b64")), "_line": line}
     return out
 
 
@@ -80,6 +82,8 @@ def main() -> int:
             "key": (sigs.get(m.get("response_id")) or {}).get("key"), "latency_ms": m.get("latency_ms"),
         })
     (result_dir / "receipts.json").write_text(json.dumps({"rows": rows, "missing": missing, "tamper_check": tamper}, indent=2))
+    (result_dir / "receipts.signed.jsonl").write_text(
+        "".join(recs[r["response_id"]]["_line"] + "\n" for r in rows), encoding="utf-8", newline="\n")
     n = len(rows)
     winners = collections.Counter(r["winner"] for r in rows)
     keys = {r["key"] for r in rows if r["key"]}

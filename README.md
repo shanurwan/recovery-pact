@@ -17,6 +17,8 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 | [Meterless](https://recovery-pact.wnswaz.win/meterless.html) | 95/95 Nemotron answers signed and verified, and a forged memory overruled 3 times out of 3 |
 | [Cursor](https://recovery-pact.wnswaz.win/cursor.html) | Post-incident review inside the IDE, built with Cursor |
 
+**Don't trust us, check it: `python scripts/prove.py`.** One command, no stack, no API key, no network (Python 3.9+, Node 18+). It re-validates every result directory from its raw traces, re-verifies all 120 Meterless Nightshift signatures from the signed envelopes committed next to the runs (and checks that a forged copy fails), recomputes the numbers on the website, and reports what each sponsor did. Today: `PASS: 26 passed, 0 failed`.
+
 ---
 
 ## The problem
