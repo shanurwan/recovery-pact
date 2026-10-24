@@ -90,3 +90,10 @@ def test_scaffold_off_skips_code_enforced_invariants(monkeypatch):
     assert guardians.continuity_guardian_turn(ctx, prop).parsed.decision == ChallengeDecision.REQUEST_REVISION  # I2 enforced
     monkeypatch.setattr(get_settings(), "reasoning_scaffold", False)
     assert guardians.continuity_guardian_turn(ctx, prop).parsed.decision == ChallengeDecision.ACCEPT  # nothing enforced
+
+
+def test_guard_local_map_routes_named_models_only(monkeypatch):
+    from app.config import get_settings
+    s = get_settings()
+    monkeypatch.setattr(s, "guard_local", "nvidia/nemotron-3.5-content-safety=http://127.0.0.1:8091/v1/ ,bad-entry")
+    assert s.guard_local_map == {"nvidia/nemotron-3.5-content-safety": "http://127.0.0.1:8091/v1"}

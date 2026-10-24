@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     guard_enabled: bool = True
     guard_model: str = "nvidia/nemotron-3.5-content-safety"
     guard_fallback_model: str = "nvidia/llama-3.1-nemotron-safety-guard-8b-v3"
+    # Guard models served on this machine instead of the NVIDIA API (OpenAI-compatible, e.g. llama.cpp),
+    # so untrusted production text never leaves it:
+    # GUARD_LOCAL="nvidia/nemotron-3.5-content-safety=http://127.0.0.1:8091/v1,nvidia/llama-3.1-nemotron-safety-guard-8b-v3=http://127.0.0.1:8092/v1"
+    guard_local: str = ""
     recordings_dir: str = "./recordings"  # shipped recordings, read by replay
     record_dir: str = "./data/recordings"  # where live runs write new recordings
     embedding_model: str = "nvidia/nemotron-3-embed-1b"
@@ -116,6 +120,9 @@ class Settings(BaseSettings):
     # --- Authority ---
     authority_ttl_seconds: int = 120
     authority_max_executions: int = 1
+    # Jobs an operator onboarded onto the static terminate allowlist, comma-separated
+    # (for example the held-out round's new replayable batches). Business rules still apply.
+    authority_extra_apps: str = ""
     # Rule I8, signed provenance: every model answer a contract rests on must carry a
     # valid Nightshift receipt (app/integrations/meterless/receipts.py). On for every
     # Nightshift run; off when models are called on the NVIDIA API directly.
@@ -154,6 +161,15 @@ class Settings(BaseSettings):
     @property
     def receipt_egress_allowed(self) -> set[str]:
         return {d.strip() for d in self.receipt_egress.split(",") if d.strip()}
+
+    @property
+    def guard_local_map(self) -> dict[str, str]:
+        out = {}
+        for pair in self.guard_local.split(","):
+            if "=" in pair:
+                model, url = pair.split("=", 1)
+                out[model.strip()] = url.strip().rstrip("/")
+        return out
 
     @property
     def receipt_lane_map(self) -> dict[str, set[str]]:

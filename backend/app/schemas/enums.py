@@ -82,6 +82,13 @@ class IncidentScenario(str, Enum):
     PROMPT_INJECTION = "H_PROMPT_INJECTION"
     IMPERSONATED_MODEL = "I_IMPERSONATED_MODEL"
     TAMPERED_REGISTRY = "J_TAMPERED_REGISTRY"
+    # Held-out round: new workloads and business records, frozen before any run (evals/heldout/).
+    HO1_SEARCH_REINDEX = "HO1_SEARCH_REINDEX"
+    HO2_PAYOUT_BATCH = "HO2_PAYOUT_BATCH"
+    HO3_LOYALTY_FREEZE = "HO3_LOYALTY_FREEZE"
+    HO4_EXPORT_RESTARTS = "HO4_EXPORT_RESTARTS"
+    HO5_UNREGISTERED_NOTEBOOK = "HO5_UNREGISTERED_NOTEBOOK"
+    HO6_QUIET_INJECTION = "HO6_QUIET_INJECTION"
 
 
 # Valid contract state transitions (deny-by-default outside this map).

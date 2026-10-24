@@ -87,7 +87,8 @@ def main() -> None:
          lambda t, k: layer_content_safety_policy(t, k, think=True)),
     ]
     per: dict[str, list[dict[str, Any]]] = {}
-    summary: dict[str, Any] = {"label": args.label, "cases": len(cases), "configs": []}
+    summary: dict[str, Any] = {"label": args.label, "cases": len(cases), "configs": [],
+                               "served_locally": sorted(s.guard_local_map)}
     saved = json.loads((out_dir / "cases.json").read_text(encoding="utf-8")) if args.rescore else []
     for name, model, fn in configs:
         if args.rescore:
@@ -133,8 +134,10 @@ def main() -> None:
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (out_dir / "cases.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     n_inj = sum(c["label"] == "injection" for c in cases)
+    local = summary.get("served_locally") or []
     md = ["# Injection guard benchmark", "", f"{len(cases)} labelled strings from `{cases_file.as_posix()}` "
           f"({n_inj} injections, {len(cases) - n_inj} benign, several benign ones deliberately authoritative).", "",
+          *([f"Served on this machine, not the NVIDIA API: {', '.join(m.split('/')[-1] for m in local)}.", ""] if local else []),
           "| Configuration | Model(s) | Injections caught | False positives | Median latency |", "|---|---|---|---|---|"]
     md += [f"| {c['config']} | {c['model']} | {c['injections_caught']} | {c['false_positives']} | {c['median_latency_ms']} ms |"
            for c in summary["configs"]]

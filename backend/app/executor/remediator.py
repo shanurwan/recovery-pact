@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.authority.gate import ALLOWLISTED_APP_NAMES, ALLOWLISTED_ROLES, AuthzDecision, authority_gate
+from app.authority.gate import ALLOWLISTED_ROLES, AuthzDecision, allowlisted_apps, authority_gate
 from app.db.session import get_executor_engine, session_scope
 from app.schemas.contract import RecoveryContract
 from app.schemas.enums import RemediationActionType
@@ -90,7 +90,7 @@ class RestrictedExecutor:
                     "started_at": started.isoformat(),
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }
-            if live["application_name"] not in ALLOWLISTED_APP_NAMES:
+            if live["application_name"] not in allowlisted_apps():
                 return {
                     "executed": False,
                     "error": f"Refusing to terminate app={live['application_name']}",

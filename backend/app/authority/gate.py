@@ -35,6 +35,14 @@ ALLOWLISTED_APP_NAMES = {
     "batch_replayable_price_sync",
     "batch_replayable_month_end_close",
 }
+
+
+def allowlisted_apps() -> set[str]:
+    """The static allowlist plus jobs an operator onboarded in config (AUTHORITY_EXTRA_APPS)."""
+    extra = {a.strip() for a in get_settings().authority_extra_apps.split(",") if a.strip()}
+    return ALLOWLISTED_APP_NAMES | extra
+
+
 PROHIBITED_ROLES = {"settlement_worker", "checkout", "postgres", "observer", "remediator"}
 PROHIBITED_APP_NAMES = {"protected_settlement", "checkout_api"}
 
@@ -99,7 +107,7 @@ class AuthorityGate:
         # 5. Role / app allowlist (static policy — not from LLM)
         role_ok = usename in ALLOWLISTED_ROLES and usename not in PROHIBITED_ROLES
         check("role_allowlist", role_ok, f"usename={usename}")
-        app_ok = app_name in ALLOWLISTED_APP_NAMES and app_name not in PROHIBITED_APP_NAMES
+        app_ok = app_name in allowlisted_apps() and app_name not in PROHIBITED_APP_NAMES
         check("app_allowlist", app_ok, f"application_name={app_name}")
 
         # 6. Workload class

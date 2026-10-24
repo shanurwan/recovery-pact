@@ -135,7 +135,16 @@ class InferenceClient:
         direct = {m.strip() for m in self.settings.meterless_direct_models.split(",") if m.strip()}
         to_nim = model in direct or call_key.startswith("guard/")
         provider = "nvidia" if self.provider == "meterless" and to_nim and self.api_key else self.provider
-        if provider == "meterless":
+        local_url = self.settings.guard_local_map.get(model) if to_nim else None
+        if local_url:
+            provider = "local"
+        if provider == "local":
+            # A guard model on this machine: the untrusted text it screens never leaves it.
+            url = f"{local_url}/chat/completions"
+            hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
+            wire_model = model
+            timeout = self.timeout
+        elif provider == "meterless":
             url = f"{meterless.normalize_base_url(self.settings.meterless_base_url)}/chat/completions"
             # One answer phase: no planning pass in front of a structured agent turn. A fresh
             # scope per call keeps Nightshift's own answer memory and cache out of the loop:
