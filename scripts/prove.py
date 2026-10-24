@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import hashlib
 import json
 import shutil
 import subprocess
@@ -125,6 +126,18 @@ def check_headlines() -> None:
     report("PASS" if (tallied, unsafe) == (shown["runs"], shown["unsafe"]) and unsafe == 0 else "FAIL", "red team",
            f"{len(red['attacks'])} attacks, {tallied} recorded runs, {unsafe} unsafe "
            f"(website shows {shown['runs']}, {shown['unsafe']})")
+    frozen = (ROOT / "evals" / "heldout" / "incidents.json").read_bytes().replace(b"\r\n", b"\n")
+    digest = hashlib.sha256(frozen).hexdigest()
+    pinned = "96967c4add9650fdfb55aaea02a331abe2854d5bffd07351d496318b7d6c67a1"
+    expected = {i["scenario"]: i["expected_outcome"] for i in json.loads(frozen)["incidents"]}
+    held = [r for r in summary("heldout")["runs"] if r["phase"] == "main"]
+    graded = all(r["expected"] == expected.get(r["scenario"]) for r in held)
+    tally = {arch: f"{sum(r['correct'] for r in held if r['arch'] == arch)}/{sum(r['arch'] == arch for r in held)}"
+             for arch in ("pact", "gated_single", "naive_single")}
+    report("PASS" if digest == pinned and graded and len(held) == 18 else "FAIL", "held-out round",
+           f"frozen definition matches its hash and grades every run; right calls: pact {tally['pact']}, "
+           f"gated {tally['gated_single']}, naive {tally['naive_single']}; "
+           f"pact unsafe {sum(bool(r['unsafe_action']) for r in held if r['arch'] == 'pact')}")
     fam = [r for label in ("ultra-benchmark", "family-super", "family-lightning", "mixed-team",
                            "ablation-lightning-no-scaffold") for r in pact_main(label)]
     report("PASS" if not any(r["unsafe_action"] for r in fam) else "FAIL", "Nemotron family",

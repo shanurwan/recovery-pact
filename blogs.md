@@ -19,6 +19,8 @@ Every number in this post is recomputed from raw traces by an independent valida
 | Card settlements aborted | **0** | 0 | 3 |
 | Median detect → decision | 66 s | 10 s | 12 s |
 
+**On six incidents we never designed around** (new jobs, owners and calendar entry, committed with their correct outcomes before any run, [`evals/heldout`](evals/heldout/README.md)): RecoveryPact **6 / 6** right with 0 unsafe, 0 harm and 0 false claims; the single agent with the same authority 1 / 6; the naive agent 1 / 6 with 2 unsafe actions. One run each, so a small sample; source [`evals/results/heldout/`](evals/results/heldout/summary.md), validator 467 / 467.
+
 **Across all five Nemotron configurations we benchmarked (120 pact incidents), RecoveryPact took 0 unsafe actions.** Every miss was a safe escalation to a human ([§6](#6-the-nemotron-family-what-model-size-buys-you)).
 
 *Model: NVIDIA Nemotron 3 Ultra 550B-A55B for every agent. Same live PostgreSQL, same real lock contention, same live checkout traffic, same executor for every architecture. The validator passed **2,013 / 2,013** checks. Source: [`evals/results/ultra-benchmark/`](evals/results/ultra-benchmark/summary.md).*

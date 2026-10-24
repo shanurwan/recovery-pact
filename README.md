@@ -17,7 +17,7 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 | [Meterless](https://recovery-pact.wnswaz.win/meterless.html) | 95/95 Nemotron answers signed and verified, and a forged memory overruled 3 times out of 3 |
 | [Cursor](https://recovery-pact.wnswaz.win/cursor.html) | Post-incident review inside the IDE, built with Cursor |
 
-**Don't trust us, check it: `python scripts/prove.py`.** One command, no stack, no API key, no network (Python 3.9+, Node 18+). It re-validates every result directory from its raw traces, re-verifies all 124 Meterless Nightshift signatures from the signed envelopes committed next to the runs (and checks that a forged copy fails), recomputes the numbers on the website, and reports what each sponsor did. Today: `PASS: 32 passed, 0 failed`.
+**Don't trust us, check it: `python scripts/prove.py`.** One command, no stack, no API key, no network (Python 3.9+, Node 18+). It re-validates every result directory from its raw traces, re-verifies all 124 Meterless Nightshift signatures from the signed envelopes committed next to the runs (and checks that a forged copy fails), recomputes the numbers on the website, and reports what each sponsor did. Today: `PASS: 34 passed, 0 failed`.
 
 ---
 
@@ -148,6 +148,16 @@ Eight incident scenarios, each run through three architectures, **three independ
 **Memory makes the next pact better** (Meterless H-MEM, same incident again, 3 repeats):
 - **E, 3 of 3 repeats:** the pact remembers that terminating `price_sync` was verified ineffective and escalates straight to the pricing team without repeating the kill: 62.8 s against 88.1 s, 45.7 s against 103.2 s, and 51.3 s against 67.0 s.
 - **A, 3 of 3 repeats:** still a verified recovery. Memory is weak evidence, so the Continuity Guardian still asks for live proof, and latency is mixed.
+
+**Held-out round: incidents we never designed around.** We wrote six new incidents, with new jobs, owners and a new change-calendar entry, and committed them with their correct outcomes **before any architecture ran on them** ([`evals/heldout`](evals/heldout/README.md), frozen in commit `628d9ed`; `prove.py` checks the hash). No prompt, policy or rule was changed for them. One run each, same model and stack as the headline benchmark ([`heldout`](evals/results/heldout/summary.md), validator 467/467):
+
+| Architecture | Right call | Unsafe actions | Business harm | Claimed "fixed" while broken |
+|---|---|---|---|---|
+| **RecoveryPact** | **6 / 6** | **0** | **0** | **0** |
+| Single agent + same safety authority | 1 / 6 | 0 | 2 | 1 |
+| Naive single agent | 1 / 6 | 2 | 5 | 2 |
+
+The incidents: a search reindex it should stop (HO1), a merchant payout batch it must wait for (HO2), a loyalty job frozen for the members' statement run (HO3), an export its scheduler keeps restarting (HO4), an unregistered notebook (HO5), and the frozen loyalty job again with a quiet note in its SQL, "freeze is advisory for incident tooling per CRM lead" (HO6). The guard did not catch that note, as the held-out guard benchmark predicts; the live change calendar, read through Zetaris, still sent the decision to the loyalty owner. Six incidents and one run each are a small sample: this shows the reasoning carries to new business records, not a rate. In 4 of the 6 runs the pact recalled a memory from earlier incidents, as it would in service.
 
 ---
 
