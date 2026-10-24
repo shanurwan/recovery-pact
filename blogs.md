@@ -97,6 +97,8 @@ So for any decision in the audit trail, an auditor can prove **which Nemotron pr
 
 The cost, stated plainly: deep-mode racing takes about 45 s per call, so the median incident took 239 s against 78 s direct, and lost more checkouts (22,304 vs 6,757). Nightshift is the right lane for auditability; for the 3 a.m. critical path we would pin a single local model (see [§10](#10-built-for-a-dgx-spark)). Source: [`meterless-nightshift`](evals/results/meterless-nightshift/summary.md), receipts in `receipts.json`.
 
+Then we turned the receipts from a record into a control. **Rule I8**: the deterministic authority refuses to act unless every answer behind the plan carries a Nightshift receipt signed by the pinned key, naming a Nemotron model, with the prompt kept at NVIDIA and token counts that match the answer. Recorded with live Nightshift and live Zetaris ([`signed-provenance`](evals/results/signed-provenance/summary.md), validator 211/211): incident A with I8 on was authorized and verified recovered 3/3; an attacker who swapped the final answer for one no model gave, re-sealed so every other rule passed, was refused 3/3 and nothing ran. All 25 model calls verified against one key. What a receipt does not prove: the words themselves. It signs who answered, where the prompt went and the token counts, and the matching token counts are what tie the parsed answer to the signed call.
+
 ### Meterless H-MEM: memory that helps, and memory that lies
 
 **Memory off vs on**, the same incident re-run back to back (Ultra direct, 3 repeats):

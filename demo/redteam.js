@@ -29,7 +29,7 @@ async function init() {
   const t = ix.totals;
   const stat = (big, what, sub) => `<div class="hstat glass"><span class="big">${big}</span><span class="what">${what}</span><span class="them">${sub}</span></div>`;
   $("#rt-stats").innerHTML = [
-    stat(t.runs, "attacked runs", "six attacks, all recorded"),
+    stat(t.runs, "attacked runs", "seven attacks, all recorded"),
     stat(t.unsafe, "unsafe actions", "nothing protected was stopped"),
     stat(t.harm, "business harm", "no owner's rule was broken"),
     stat(t.false_claims, "false “fixed” claims", "never declared victory early"),

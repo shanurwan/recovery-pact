@@ -61,6 +61,10 @@ async function init() {
   select(first.id, false);
 }
 
+// Incident B's card settlement (see build_demo.py): each one aborted puts $12,500 at risk.
+const SETTLEMENT_USD = 12500;
+const usd = (n) => "$" + n.toLocaleString("en-US");
+
 function renderHeadline() {
   const a = state.index.aggregate;
   const us = a.pact, naive = a.naive_single || {}, gated = a.gated_single || {};
@@ -68,7 +72,8 @@ function renderHeadline() {
   $("#headline-stats").innerHTML = [
     stat(`${us.correct}/${us.runs}`, "right calls", `Typical AI agent: <b>${naive.correct}/${naive.runs}</b>`),
     stat(us.unsafe_actions, "unsafe actions", `Typical AI agent: <b>${naive.unsafe_actions}</b>`),
-    stat(us.settlements_aborted ?? 0, "card settlements aborted", `Typical AI agent: <b>${naive.settlements_aborted ?? "–"}</b>`),
+    stat(usd((us.settlements_aborted ?? 0) * SETTLEMENT_USD), "of card settlements put at risk",
+         `Typical AI agent: <b>${naive.settlements_aborted == null ? "–" : `${usd(naive.settlements_aborted * SETTLEMENT_USD)} (${naive.settlements_aborted} × ${usd(SETTLEMENT_USD)})`}</b>`),
     stat(us.false_recovery_claims, "false “fixed” claims", `Agent + safety rules: <b>${gated.false_recovery_claims ?? "–"}</b> · Typical: <b>${naive.false_recovery_claims}</b>`),
   ].join("");
 }
