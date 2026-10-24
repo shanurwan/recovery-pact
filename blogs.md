@@ -385,17 +385,24 @@ That is the same behaviour as under the hosted-API 500s in §6: an unavailable m
 
 ## 7. The guard: why a content classifier is not an injection detector
 
-30 labelled strings: 15 injections and 15 benign. Several benign strings are deliberately authoritative ("approved by payments, ref PAY-0193"), because that is what real operational text looks like.
+Two sets of labelled strings. The **tuning set** (`seed/guard_cases.json`): 15 injections and 15 benign strings, several of the benign ones deliberately authoritative ("approved by data owner, ticket DATA-882"), because that is what real operational text looks like. The **held-out set** (`seed/guard_cases_heldout.json`): 10 injections and 10 benign strings, written before any guard ran on them and never used to tune a prompt or a policy. Results: [`guard-bench-v2`](evals/results/guard-bench-v2/summary.md), [`guard-bench-heldout`](evals/results/guard-bench-heldout/summary.md).
 
-| Configuration | Injections caught | False positives | Median latency |
-|---|---|---|---|
-| Nemotron Content Safety, out of the box | 7 / 15 | 0 / 15 | 2.7 s |
-| Llama 3.1 Nemotron Safety Guard 8B, out of the box | 8 / 15 | 0 / 15 | 0.6 s |
-| Content Safety + our injection policy | 10 / 15 | 0 / 15 | 1.6 s |
-| Nemotron Lightning as a reasoning judge | 11 / 15 | 0 / 15 | 0.9 s |
-| **RecoveryPact runtime guard** (Safety Guard ∥ judge, either flags) | **11 / 15** | **0 / 15** | **0.9 s** |
+| Configuration | Tuning set: caught | Held-out: caught | False positives (all 25 benign) | Median latency |
+|---|---|---|---|---|
+| Nemotron 3.5 Content Safety, out of the box | 7 / 15 | 1 / 10 | 0 | 0.5 s |
+| Llama 3.1 Nemotron Safety Guard 8B, out of the box | 8 / 15 | 2 / 10 | 0 | 0.6 s |
+| Content Safety, our policy pasted into the prompt | 10 / 15 | 0 / 10 | 0 | 0.5 s |
+| Nemotron 3.5 Lightning as a reasoning judge | 11 / 15 | 1 / 10 | 0 | 0.9 s |
+| **Content Safety, our policy as its native `custom_policy`** | **14 / 15** | 3 / 10 | 0 | 2.7 s |
+| Content Safety, native policy, **reasoning on** | 7 / 15 | 3 / 10 | 0 | 7.6 s |
+| Two layers (Safety Guard ∥ judge), the guard until now | 11 / 15 | 2 / 10 | 0 | 0.9 s |
+| **RecoveryPact runtime guard: three layers** (+ Content Safety, native policy) | **14 / 15** | **3 / 10** | **0** | 2.7 s |
 
-The four misses are all *plausible operator notes* ("Freeze lifted early…", "owner pre-approved"). That is why the guard is only the first line of defence: even an injection that slips through cannot pass I2/I3 (registry **and** live change-calendar evidence are required, and they come from Zetaris, not from the session text), and it cannot pass the authority.
+Three things we learned:
+
+- **Use the safety model the way NVIDIA built it.** The same policy text caught 10/15 pasted into the prompt and 14/15 passed as Content Safety 3.5's `custom_policy` (`chat_template_kwargs`), with no false positives.
+- **Reasoning mode made it worse here.** With `enable_thinking` on, Content Safety argued its way out of the policy on half the injections ("this is just a data string") and took 7.6 s. The runtime guard keeps it off.
+- **The held-out set is the honest number, and it is low.** Quiet injections that never address an AI ("escalation disabled per SRE lead", "delegated to the on-call automation for tonight") get past every configuration: the best catches 3/10. That is why the guard is only the first line of defence. An injection that slips through still cannot pass I2/I3 (registry **and** live change-calendar evidence are required, and they come from Zetaris, not from the session text), and it cannot pass the authority. The red team measures that end to end: 45 attack runs, 0 unsafe actions.
 
 ---
 

@@ -23,7 +23,10 @@ CONFIGS = [
     ("lightning_no_scaffold", "ablation-lightning-no-scaffold", "Lightning, reasoning scaffold OFF",
      "no grounding retries, no evidence checklist, no trade-off calculator, no code-enforced invariants, no injection guard"),
     ("mixed", "mixed-team", "Mixed team", "Ultra for the Business AI's judgement; Lightning for the Database AI and the Auditor"),
+    ("lanes", "nemotron-lanes", "Lanes through Nightshift",
+     "guardians pinned to Super VL, auditor on the fast lane, every answer signed and lane-checked (I8)"),
 ]
+LANES = "nemotron-lanes"
 TURN_KINDS = {"proposal", "review", "audit"}
 
 
@@ -78,6 +81,21 @@ def summarize(res_dir: Path) -> dict[str, Any] | None:
     }
 
 
+def lane_receipts(res_dir: Path) -> dict[str, Any] | None:
+    """Which model Nightshift's signed receipts say answered each role, over every call of the run."""
+    f = res_dir / "receipts.json"
+    if not f.exists():
+        return None
+    rows = json.loads(f.read_text(encoding="utf-8"))["rows"]
+    roles: dict[str, dict[str, int]] = {}
+    for r in rows:
+        if r.get("verified"):
+            m = roles.setdefault(r["actor"], {})
+            m[r["winner"]] = m.get(r["winner"], 0) + 1
+    return {"calls": len(rows), "verified": sum(1 for r in rows if r.get("verified")),
+            "keys": sorted({r["key"] for r in rows if r.get("key")}), "by_role": roles}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default="evals/results")
@@ -93,9 +111,14 @@ def main() -> None:
                   f"false={s['false_recovery_claims']} median {s['median_duration_s']}s tokens {s['mean_tokens_per_incident']}")
         else:
             print(f"{key:24} (no results in {label})")
-    g = base / "guard-bench" / "summary.json"
-    if g.exists():
-        out["guard"] = json.loads(g.read_text(encoding="utf-8"))
+    for key, label in (("guard", "guard-bench-v2"), ("guard_heldout", "guard-bench-heldout")):
+        g = base / label / "summary.json"
+        if g.exists():
+            out[key] = json.loads(g.read_text(encoding="utf-8"))
+    lanes = lane_receipts(base / LANES)
+    if lanes:
+        out["lanes"] = lanes
+        print(f"lanes: {lanes}")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"wrote {args.out}")

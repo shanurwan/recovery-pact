@@ -17,7 +17,7 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 | [Meterless](https://recovery-pact.wnswaz.win/meterless.html) | 95/95 Nemotron answers signed and verified, and a forged memory overruled 3 times out of 3 |
 | [Cursor](https://recovery-pact.wnswaz.win/cursor.html) | Post-incident review inside the IDE, built with Cursor |
 
-**Don't trust us, check it: `python scripts/prove.py`.** One command, no stack, no API key, no network (Python 3.9+, Node 18+). It re-validates every result directory from its raw traces, re-verifies all 120 Meterless Nightshift signatures from the signed envelopes committed next to the runs (and checks that a forged copy fails), recomputes the numbers on the website, and reports what each sponsor did. Today: `PASS: 28 passed, 0 failed`.
+**Don't trust us, check it: `python scripts/prove.py`.** One command, no stack, no API key, no network (Python 3.9+, Node 18+). It re-validates every result directory from its raw traces, re-verifies all 124 Meterless Nightshift signatures from the signed envelopes committed next to the runs (and checks that a forged copy fails), recomputes the numbers on the website, and reports what each sponsor did. Today: `PASS: 32 passed, 0 failed`.
 
 ---
 
@@ -104,7 +104,7 @@ flowchart LR
 | I6 | Acceptance criteria come from the SLO (served by Zetaris); guardians may tighten, never loosen | code |
 | I7 | Waiting must fit inside the degradation the business tolerates (`max_degradation_s`) | model + code |
 | M1 | Memory of a verified-ineffective termination vetoes repeating it. Memory may veto, never permit | model + code |
-| I8 | Signed provenance: every model answer a contract rests on must carry a valid Meterless Nightshift receipt (pinned Ed25519 key, a Nemotron model, an allowed prompt destination, matching token counts, written during this incident) | authority (code) |
+| I8 | Signed provenance: every model answer a contract rests on must carry a valid Meterless Nightshift receipt (pinned Ed25519 key, a Nemotron model, from the role's lane when lanes are set, an allowed prompt destination, matching token counts, written during this incident) | authority (code) |
 | I9 | Data quality as policy: with the Zetaris semantic layer on, a registry row that fails one of its data-quality rules (or could not be checked) can't vouch for a kill | Continuity Guardian + code |
 
 ---
@@ -265,6 +265,7 @@ The business context lives in three systems that know nothing about each other. 
 **Nightshift's signatures are a safety control, not just a log (rule I8).** With `RECEIPT_GATE=true`, the authority refuses to run anything unless the model answers behind the contract, the final proposal and the accepting review, each carry a Nightshift receipt that:
 - is signed by the pinned Nightshift key (Ed25519, verified in the authority);
 - names this exact call and says a **Nemotron** model answered, the same one the client was told;
+- with `RECEIPT_LANES` set, names a model from that role's lane, so a router substituting a smaller model for a guardian is caught;
 - shows the prompt went only where policy allows (`nvidia` or on the machine);
 - attests the same token counts the answer arrived with, and was written during this incident.
 
@@ -285,11 +286,24 @@ Agents ask for a logical Nemotron model and `METERLESS_ROUTES` maps it to a Nigh
 
 Memory is weak evidence by design. It may change what the guardians check first, and it may veto a repeat of a failed action (M1), but it can never authorize one.
 
-### NVIDIA: Nemotron for every agent
-- **Guardians and auditor:** the benchmark runs the whole Nemotron family (Ultra 550B-A55B, Super 120B-A12B, Lightning 30B-A3B), plus a mixed-size team and a scaffold ablation. See [blogs.md](blogs.md) and the [Nemotron page](https://recovery-pact.wnswaz.win/nemotron.html).
-- **Injection guard:** Llama 3.1 Nemotron Safety Guard 8B plus a small reasoning Nemotron judge screen every untrusted string before an agent reads it.
-- **Memory embeddings:** `nvidia/nemotron-3-embed-1b` (direct provider), or an embedding route on the runtime (`METERLESS_EMBED_MODEL`).
-- **Served through Meterless Nightshift** by default, or through the NVIDIA NIM API directly (`AI_PROVIDER=nvidia`).
+### NVIDIA: where Nemotron contributes, model by model
+Six Nemotron models, each in the lane our measurements chose for it. Every number links to a result directory the validator recomputed from raw traces.
+
+| Nemotron model | Job in RecoveryPact | Why this model here, measured | Evidence |
+|---|---|---|---|
+| Nemotron 3 Ultra 550B-A55B | Both guardians and the auditor in the main benchmark | 24 incidents: $0 put at risk, 0 unsafe actions, against $37,500 for a typical agent on the same model | [`ultra-benchmark`](evals/results/ultra-benchmark/summary.md) |
+| Nemotron 3.5 Super VL 120B-A12B | The guardians' lane through Nightshift | The family study's sweet spot: Super decides in a median 40 s against Ultra's 66 s, and every run the API answered was correct (22/24; both misses were hosted-API 500s) | [`family-super`](evals/results/family-super/summary.md), [blogs.md §6](blogs.md#6-the-nemotron-family-what-model-size-buys-you) |
+| Nemotron 3.5 Lightning 30B-A3B | The guard's reasoning judge; the auditor's fast lane | With our scaffold, 20/24 and 0 unsafe on 3B active parameters; without it, 14/24 | [`family-lightning`](evals/results/family-lightning/summary.md), [`ablation-lightning-no-scaffold`](evals/results/ablation-lightning-no-scaffold/summary.md) |
+| Llama 3.1 Nemotron Safety Guard 8B v3 | Guard layer 1, on every untrusted string | Fastest layer (0.6 s) | [`guard-bench-v2`](evals/results/guard-bench-v2/summary.md) |
+| Nemotron 3.5 Content Safety 4B | Guard layer 3, enforcing our own written policy | As a native `custom_policy`: 14/15 on the tuning set, 0 false positives; the same text pasted into the prompt caught 10/15 | [`guard-bench-v2`](evals/results/guard-bench-v2/summary.md), [`guard-bench-heldout`](evals/results/guard-bench-heldout/summary.md) |
+| Nemotron 3 Embed 1B | H-MEM recall | A forged memory is recalled and then overruled by live Zetaris records, 3/3 | [`poisoned-memory`](evals/results/poisoned-memory/summary.md) |
+
+**What was unique about our use of NVIDIA technology:**
+- **Nemotron's provenance decides what runs.** Nightshift signs a receipt naming the Nemotron model that answered each call. The authority refuses to touch the database unless every answer behind the contract has one (I8), and, with lanes set (`RECEIPT_LANES`), unless the receipt names a model from that role's lane. Nightshift can substitute a model on a route: in a live run with the guardians pinned to Super VL, the Business AI's answer came back signed by Lightning, and the authority refused ([`lane-check`](evals/results/lane-check/receipts.md), 4/4 signatures verified).
+- **A family study, not a single model.** The same 8 incidents × 3 repeats on Ultra, Super, Lightning, a mixed team and a no-scaffold ablation chose each lane above.
+- **Three Nemotron safety layers in parallel, measured honestly.** On a held-out set nobody tuned on, quiet injections ("escalation disabled per SRE lead") get past every configuration (best: 3/10). The guard is a first filter; the invariants and the authority are what stop an action ([blogs.md §7](blogs.md#7-the-guard-why-a-content-classifier-is-not-an-injection-detector)).
+
+**Why a DGX Spark.** A recovery agent reads what a company guards most, and every one of these models fits on one DGX Spark together: Super VL at FP4 (~60 GB), Safety Guard 8B (~16 GB), Lightning at FP4 (~15 GB), Content Safety 4B (~8 GB) and Embed 1B (~2 GB), about 101 GB of 128 GB (weights only, our estimate). Today every guardian turn is a hosted round trip (a median 45–50 s through Nightshift's deep route), Super's only misses were hosted-API errors, and the router's substitutions are what the lane check exists to catch. A Spark beside the database removes all three. This is the plan, not a measurement: our runs used hosted Nemotron.
 
 ### Cursor: post-incident review in the IDE
 Cursor's CLI agent, running xAI's Grok 4.7, built [`tools/recoverypact-mcp`](tools/recoverypact-mcp/README.md), a read-only MCP server registered in `.cursor/mcp.json`: `list_runs`, `explain_run`, `compare_arms`, `validate_results`, `verify_receipts`. Ask Cursor *"why did the pact refuse to kill the settlement in incident B?"* and it answers from the run record, the validator and the signed receipts. It can't start an incident or call the executor. Prompts and a real transcript: [`docs/cursor.md`](docs/cursor.md).

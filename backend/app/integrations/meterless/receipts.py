@@ -12,6 +12,8 @@ on must each carry a receipt that
 - exists, and is signed by the pinned Nightshift key;
 - names this exact call (request_id) with status ok;
 - says a Nemotron model answered, the same model the client was told served it;
+- when the role has a lane (RECEIPT_LANES), names one of that lane's models: a runtime
+  that substitutes a smaller model for a guardian's turn is caught here;
 - kept the prompt inside the allowed destinations (NVIDIA, or on the machine);
 - attests the same input and output token counts the answer arrived with;
 - was written during this incident, not replayed from an older one.
@@ -47,6 +49,14 @@ FETCH_WAIT_S = 15.0  # Nightshift writes the receipt just after it answers
 def key_fingerprint(pubkey_b64: str) -> str:
     """Same fingerprint the published receipts table uses: sha256 of the base64 key, 16 hex chars."""
     return hashlib.sha256((pubkey_b64 or "").encode()).hexdigest()[:16]
+
+
+_ROLE_PREFIX = {"db": "database_guardian", "cg": "continuity_guardian", "auditor": "auditor"}
+
+
+def role_of(call_key: str) -> str:
+    """The role a call answered for, from its key (".../db-r1-a1" -> database_guardian)."""
+    return _ROLE_PREFIX.get(call_key.rsplit("/", 1)[-1].split("-", 1)[0], "")
 
 
 def signature_valid(envelope: dict[str, Any]) -> bool:
@@ -107,6 +117,10 @@ def check(envelope: dict[str, Any] | None, call: dict[str, Any], not_before_ms: 
         ("token counts match the answer", usage.get("input_tokens") == call.get("prompt_tokens")
          and usage.get("output_tokens") == call.get("completion_tokens")),
     ]
+    lane = s.receipt_lane_map.get(role_of(call.get("call_key") or ""))
+    if lane:
+        out["lane"] = sorted(lane)
+        rules.append(("served by the role's lane model", win in lane))
     ts = body.get("ts_ms")
     if not_before_ms is not None:
         rules.append(("written during this incident", isinstance(ts, int) and ts >= not_before_ms))

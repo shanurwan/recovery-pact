@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     meterless_receipt_key: str = ""  # Nightshift's public key (base64) or its 16-hex fingerprint
     receipt_models: str = "nvidia/nemotron"  # allowed model prefixes, comma-separated
     receipt_egress: str = "nvidia,local"  # allowed prompt destinations
+    # Lanes: which Nemotron models may answer each role, e.g.
+    # RECEIPT_LANES="database_guardian=nvidia/nemotron-3.5-super-vl-120b-a12b|nvidia/nemotron-3-ultra-550b-a55b"
+    # A runtime can substitute a model; with a lane set, the receipt must name one of these.
+    receipt_lanes: str = ""
 
     # --- Demo ---
     checkout_timeout_ms: int = 3000
@@ -150,6 +154,15 @@ class Settings(BaseSettings):
     @property
     def receipt_egress_allowed(self) -> set[str]:
         return {d.strip() for d in self.receipt_egress.split(",") if d.strip()}
+
+    @property
+    def receipt_lane_map(self) -> dict[str, set[str]]:
+        out = {}
+        for pair in self.receipt_lanes.split(","):
+            if "=" in pair:
+                role, models = pair.split("=", 1)
+                out[role.strip()] = {m.strip() for m in models.split("|") if m.strip()}
+        return out
 
     def model_for(self, role: str) -> str:
         return getattr(self, f"model_{role}", "") or self.nemotron_model

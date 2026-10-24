@@ -153,11 +153,22 @@ def check_sponsors() -> None:
     imp = [r for r in pact_main("signed-provenance") if r["scenario"] == "I_IMPERSONATED_MODEL"]
     report("OBSERVED" if gate.get("enabled") and imp else "NOT OBSERVED", "Nightshift receipts gate execution",
            f"rule I8 on; impersonated answer refused {sum(r['outcome'] == 'DENIED' for r in imp)}/{len(imp)}")
+    lane_run = json.loads(next((RESULTS / "lane-check" / "runs").glob("*.json")).read_text(encoding="utf-8"))
+    refused = [c["detail"] for e in lane_run["events"] if e["kind"] == "authority"
+               for c in e["data"]["checks"] if c["name"] == "signed_provenance" and not c["passed"]]
+    winners = {r["call_key"].rsplit("/", 1)[-1]: r["winner"]
+               for r in json.loads((RESULTS / "lane-check" / "receipts.json").read_text(encoding="utf-8"))["rows"]}
+    caught = [d for d in refused if "lane" in d]
+    report("OBSERVED" if caught and not lane_run["result"]["action"]["executed"] else "NOT OBSERVED",
+           "Nightshift receipts enforce lanes",
+           f"guardians pinned to Super VL; the Business AI's answer was signed by {winners.get('cg-r1-a1', '?').split('/')[-1]}; "
+           f"refused: {'; '.join(caught) or 'no'}")
     vec = ROOT / "tests" / "meterless" / "vectors.json"
     report("OBSERVED" if vec.exists() else "NOT OBSERVED", "Meterless H-MEM",
            "conformance vectors in tests/meterless (run: pytest tests -k hmem)")
-    models = sorted({summary(label)["model"] for label in ("ultra-benchmark", "family-super", "family-lightning")})
-    report("OBSERVED", "NVIDIA Nemotron", ", ".join(m.split("/")[-1] for m in models))
+    models = sorted({summary(label)["model"].split("/")[-1] for label in ("ultra-benchmark", "family-super", "family-lightning")}
+                    | {m.split("/")[-1] for c in summary("guard-bench-v2")["configs"] for m in c["model"].split("+")})
+    report("OBSERVED", "NVIDIA Nemotron", f"{len(models)} models: " + ", ".join(models))
 
 
 def main() -> int:

@@ -113,11 +113,13 @@ class InferenceClient:
         call_key: str,
         model: str,
         max_tokens: int = 120,
+        template_kwargs: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Plain-text call (used by the safety guard), recorded and replayable like the rest."""
-        content, metrics = self._chat(
-            model, [{"role": "user", "content": user}], call_key, {"temperature": 0, "max_tokens": max_tokens}, require_json=False
-        )
+        extra: dict[str, Any] = {"temperature": 0, "max_tokens": max_tokens}
+        if template_kwargs:
+            extra["chat_template_kwargs"] = template_kwargs
+        content, metrics = self._chat(model, [{"role": "user", "content": user}], call_key, extra, require_json=False)
         return content, metrics
 
     def _chat(

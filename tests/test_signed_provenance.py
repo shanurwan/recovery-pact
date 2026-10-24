@@ -59,7 +59,28 @@ def pinned(monkeypatch):
     monkeypatch.setattr(s, "meterless_receipt_key", PUB)
     monkeypatch.setattr(s, "receipt_models", "nvidia/nemotron")
     monkeypatch.setattr(s, "receipt_egress", "nvidia,local")
+    monkeypatch.setattr(s, "receipt_lanes", "")
     return s
+
+
+GUARDIAN_LANE = "database_guardian=nvidia/nemotron-3.5-super-vl-120b-a12b|nvidia/nemotron-3-ultra-550b-a55b"
+
+
+def test_real_receipt_outside_the_guardian_lane_fails(monkeypatch):
+    # The real receipt: asked for the deep lane, Nightshift served Lightning to a Database Guardian turn.
+    monkeypatch.setattr(get_settings(), "meterless_receipt_key", REAL_KEY_FP)
+    monkeypatch.setattr(get_settings(), "receipt_lanes", GUARDIAN_LANE)
+    r = receipts.check(REAL, REAL_CALL)
+    assert not r["ok"] and r["failed"] == ["served by the role's lane model"]
+
+
+def test_lane_model_passes_and_other_roles_are_unconstrained(pinned, monkeypatch):
+    monkeypatch.setattr(pinned, "receipt_lanes", GUARDIAN_LANE)
+    assert receipts.check(envelope(), call())["ok"]
+    lightning = "nvidia/nemotron-3.5-lightning-30b-a3b"
+    auditor = {**call(model=lightning), "call_key": "A/pact/main/auditor-a1"}
+    assert receipts.check(envelope(model=lightning), auditor)["ok"]
+    assert receipts.role_of("A/pact/main/cg-r2-a1") == "continuity_guardian"
 
 
 def test_real_nightshift_receipt_verifies(monkeypatch):
