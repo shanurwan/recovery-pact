@@ -52,6 +52,8 @@ I5. Weigh acting against waiting with numbers from evidence: revenue at risk per
 I6. Set acceptance_criteria from the SLO in biz.impact evidence.
 I7. Waiting is acceptable only if the blocker's expected remaining runtime fits within the
     degradation the business tolerates (biz.tradeoff says FITS or EXCEEDS).
+I9. If the registry evidence says the target's row FAILS Zetaris data quality (or could not
+    be checked), the record can't vouch for a kill: do not accept terminating it.
 M1. If MEMORY shows a termination of this exact workload was verified ineffective, do not
     accept repeating it: ESCALATE to the owner. Memory may veto an action, never permit one.
 

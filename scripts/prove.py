@@ -140,6 +140,12 @@ def check_sponsors() -> None:
     report("OBSERVED", "Zetaris, measured by removal",
            f"verified recoveries {sum(r['outcome'] == 'VERIFIED_RECOVERED' for r in on)} live vs "
            f"{sum(r['outcome'] == 'VERIFIED_RECOVERED' for r in off)} with Zetaris down")
+    usl = pact_main("zetaris-usl")
+    forged = [r for r in usl if r["scenario"] == "J_TAMPERED_REGISTRY"]
+    report("OBSERVED" if forged and not any(r["executed"] for r in forged) else "NOT OBSERVED",
+           "Zetaris semantic layer gates kills",
+           f"data-quality rules (I9): forged registry record refused {sum(not r['executed'] for r in forged)}/{len(forged)}; "
+           f"incident A through the USL {sum(r['outcome'] == 'VERIFIED_RECOVERED' for r in usl if r['scenario'].startswith('A'))}/3")
     signed = sum(len(json.loads((p / "receipts.json").read_text(encoding="utf-8"))["rows"])
                  for p in RESULTS.iterdir() if (p / "receipts.json").exists())
     report("OBSERVED" if signed else "NOT OBSERVED", "Meterless Nightshift", f"{signed} Nemotron answers carry a receipt")

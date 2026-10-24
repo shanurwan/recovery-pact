@@ -137,6 +137,9 @@ def caption(e: dict[str, Any], jobs: dict[str, str]) -> str | None:
                     "made it. Every other rule passed.")
         return f"Safety authority refuses: {', '.join(f.replace('_', ' ') for f in failed)}."
     if k == "adversary":
+        if d.get("registry_after"):
+            return ("Security test: before the incident, an insider forges a registry record for this unknown session: "
+                    "an inventory batch job, may_interrupt, safe to stop. It is marked not replayable, with no replay cost.")
         if d.get("spoofed_call"):
             return ("Security test: the final proposal is swapped for one from an endpoint pretending to be the model "
                     "provider. Same plan, same target; only who wrote it is wrong.")

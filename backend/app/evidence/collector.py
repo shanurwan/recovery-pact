@@ -263,6 +263,7 @@ def probe_workload_registry(
             f"replay cost {cost if cost is not None else 'n/a'} min, "
             f"typical runtime {r.get('typical_runtime_s')}s, policy {r['interrupt_policy']}. "
             f"{r['business_purpose']}"
+            + _quality_note(r)
         )
     for name in app_names:
         if name not in known:
@@ -270,6 +271,16 @@ def probe_workload_registry(
     ev = _biz_evidence(ledger, "biz.workload_registry", ans, " | ".join(parts), requested_by)
     ev.facts["guard"] = guard_log
     return ev
+
+
+def _quality_note(r: dict[str, Any]) -> str:
+    if "dq_valid" not in r:
+        return ""
+    if r["dq_valid"] is True:
+        return " Zetaris data quality: row passes every rule."
+    if r["dq_valid"] is None:
+        return " Zetaris data quality: could NOT be checked, so the row is unverified."
+    return f" Zetaris data quality: row FAILS {', '.join(r.get('dq_failed_rules') or ['a rule'])}."
 
 
 def probe_change_calendar(

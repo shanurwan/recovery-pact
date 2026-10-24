@@ -13,11 +13,16 @@ locally from the same sources and every result is labeled
 ``local_federation_fallback`` so nobody mistakes it for the sponsor path. With
 BUSINESS_FALLBACK=false a failed question is ``business_unavailable`` instead: no
 records, and the pact treats the answer as unknown, never as "nothing found".
+
+With ZETARIS_QUERY_LAYER=usl the same questions read the Unified Semantic Layer
+``recovery_business`` instead, and every registry answer carries Zetaris's own
+data-quality verdict for each row (``dq_valid``, ``dq_failed_rules``).
 """
 
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import re
 import time
@@ -70,6 +75,7 @@ class BusinessContext:
         self.csv_path = Path(s.change_calendar_csv)
         self.fallback = s.business_fallback
         self.outage = {q.strip() for q in s.business_outage.split(",") if q.strip()}
+        self.usl = s.zetaris_usl if s.zetaris_query_layer == "usl" else ""
 
     @property
     def mode(self) -> str:
@@ -78,6 +84,18 @@ class BusinessContext:
     # ------------------------------------------------------------- questions
 
     def workload_registry(self, application_names: list[str]) -> BusinessAnswer:
+        if self.usl:
+            sql = (
+                "SELECT w.application_name, w.job_name, w.owner_team, w.workload_class, "
+                "w.replayable, w.replay_cost_minutes, w.typical_runtime_s, w.interrupt_policy, "
+                "w.business_purpose, e.oncall, e.channel "
+                f"FROM {self.usl}.workload w LEFT JOIN {self.usl}.owner e ON e.owner_team = w.owner_team "
+                f"WHERE w.application_name IN {_in_list(application_names)}"
+            )
+            ans = self._ask(sql, lambda: self._local_registry(application_names), "registry")
+            if ans.source == "zetaris":
+                self._attach_quality(ans)
+            return ans
         sql = (
             "SELECT w.application_name, w.job_name, w.owner_team, w.workload_class, "
             "w.replayable, w.replay_cost_minutes, w.typical_runtime_s, w.interrupt_policy, "
@@ -91,11 +109,12 @@ class BusinessContext:
     def change_calendar(self, application_names: list[str]) -> BusinessAnswer:
         # Federated join: CSV change calendar x PostgreSQL workload registry.
         fmt = "yyyy-MM-dd'T'HH:mm:ssX"
+        cal, reg = (f"{self.usl}.change_window", f"{self.usl}.workload") if self.usl else             (f"{self.cal}.change_calendar", f"{self.ds}.workload_registry")
         sql = (
             "SELECT c.change_id, c.scope, c.policy, c.reason, c.window_start, c.window_end, "
             "w.application_name, w.owner_team "
-            f"FROM {self.cal}.change_calendar c "
-            f"JOIN {self.ds}.workload_registry w ON c.scope_type = 'job' AND c.scope = w.job_name "
+            f"FROM {cal} c "
+            f"JOIN {reg} w ON c.scope_type = 'job' AND c.scope = w.job_name "
             f"WHERE w.application_name IN {_in_list(application_names)} "
             f"AND current_timestamp() BETWEEN to_timestamp(c.window_start, \"{fmt}\") "
             f"AND to_timestamp(c.window_end, \"{fmt}\")"
@@ -107,7 +126,7 @@ class BusinessContext:
         sql = (
             "SELECT s.service, s.slo_success_rate, s.slo_p95_ms, s.verification_window_s, "
             "s.revenue_per_minute_cents, s.max_degradation_s, s.tier, t.total, t.failed "
-            f"FROM {self.ds}.service_slo s CROSS JOIN ("
+            f"FROM {self.usl + '.service_slo' if self.usl else self.ds + '.service_slo'} s CROSS JOIN ("
             "SELECT COUNT(*) AS total, "
             "SUM(CASE WHEN outcome <> 'SUCCESS' THEN 1 ELSE 0 END) AS failed "
             f"FROM {self.shop}.checkout_events "
@@ -115,6 +134,31 @@ class BusinessContext:
             "WHERE s.service = 'checkout'"
         )
         return self._ask(sql, lambda: self._local_impact(window_seconds), "impact")
+
+    def _attach_quality(self, ans: BusinessAnswer) -> None:
+        """Run the USL's data-quality rules on the workload table now and mark each row.
+
+        Fails closed: if the rules can't be run, every row is marked unchecked
+        (dq_valid None), which the Continuity Guardian treats like a failed check.
+        """
+        table = f"{self.usl}.workload"
+        try:
+            client = get_zetaris_client()
+            run = client.query(f"RUN DQ TABLE {table}")
+            invalid = client.query(f"SHOW DQ ALL INVALID TABLE {table}")
+        except Exception as exc:  # noqa: BLE001
+            for r in ans.records:
+                r["dq_valid"], r["dq_failed_rules"] = None, []
+            ans.notes.append(f"zetaris_dq_error: {str(exc)[:200]}")
+            return
+        failing = [row[0] for row in run.rows if str(row[5]) != "0"]
+        bad = {json.loads(row[0]).get("application_name") for row in invalid.rows if row and row[0]}
+        for r in ans.records:
+            r["dq_valid"] = r["application_name"] not in bad
+            r["dq_failed_rules"] = failing if r["application_name"] in bad else []
+        ans.query += f"; RUN DQ TABLE {table}; SHOW DQ ALL INVALID TABLE {table}"
+        ans.latency_ms += run.latency_ms + invalid.latency_ms
+        ans.notes.append(f"zetaris_dq: {len(run.rows)} rule checks, {len(bad)} invalid row(s)")
 
     # ------------------------------------------------------------- plumbing
 

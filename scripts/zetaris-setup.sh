@@ -41,4 +41,7 @@ for _ in $(seq 1 60); do
 done
 
 docker compose exec -T api python -m app.integrations.zetaris.setup
+# The Unified Semantic Layer recovery_business and its data-quality rules (usl.sql). Use it with
+# ZETARIS_QUERY_LAYER=usl in .env: registry answers then carry Zetaris's DQ verdict (invariant I9).
+docker compose exec -T api python -m app.integrations.zetaris.setup --usl
 echo "done: open http://localhost:${UI_PORT:-8080} and check the Zetaris chip says 'live federation'"

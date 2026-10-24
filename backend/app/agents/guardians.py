@@ -395,6 +395,10 @@ def enforce_business_invariants(
         rec = registry[0]
         if rec.get("interrupt_policy") == "never_interrupt" or rec.get("workload_class") == "PROTECTED_SETTLEMENT":
             override = (ChallengeDecision.REJECT, "I1: registry marks the target never_interrupt", ["I1"], [])
+        elif "dq_valid" in rec and rec["dq_valid"] is not True:
+            rules = ", ".join(rec.get("dq_failed_rules") or []) or "rules could not be run"
+            override = (ChallengeDecision.REJECT, f"I9: the registry row for the target fails Zetaris data quality "
+                        f"({rules}); a record that contradicts itself can't vouch for a kill", ["I9"], [])
     elif registry_probed:
         override = (ChallengeDecision.REJECT, "I4: target is unknown to the workload registry", ["I4"], [])
     if override is None:

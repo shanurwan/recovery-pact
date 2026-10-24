@@ -81,6 +81,7 @@ class IncidentScenario(str, Enum):
     BUSINESS_FREEZE = "G_BUSINESS_FREEZE"
     PROMPT_INJECTION = "H_PROMPT_INJECTION"
     IMPERSONATED_MODEL = "I_IMPERSONATED_MODEL"
+    TAMPERED_REGISTRY = "J_TAMPERED_REGISTRY"
 
 
 # Valid contract state transitions (deny-by-default outside this map).

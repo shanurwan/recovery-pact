@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     zetaris_continuity_ds: str = "continuity"
     zetaris_shop_ds: str = "shop"
     zetaris_calendar_db: str = "RP_CHANGE_MGMT"
+    # "views" asks the registered sources directly; "usl" asks the Unified Semantic Layer
+    # (backend/app/integrations/zetaris/usl.sql) and runs its data-quality rules on every
+    # registry question, so a row that fails them can't vouch for a kill (invariant I9).
+    zetaris_query_layer: str = "views"
+    zetaris_usl: str = "lightning.metastore.recoverypact.recovery_business"
     change_calendar_csv: str = "./seed/business/change_calendar.csv"
     # When Zetaris fails: answer locally from the same sources, labeled (true), or report
     # the business context as unavailable, which the pact treats as unknown (false).

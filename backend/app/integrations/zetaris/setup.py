@@ -1,6 +1,7 @@
 """Register RecoveryPact's three business sources in a Zetaris tenant. Idempotent.
 
-    python -m app.integrations.zetaris.setup
+    python -m app.integrations.zetaris.setup          # the three sources
+    python -m app.integrations.zetaris.setup --usl    # then the semantic layer + DQ rules (usl.sql)
 
 Expects the Zetaris driver to reach this stack's PostgreSQL as
 ``recovery-pact-postgres-1`` (scripts/zetaris-setup.sh puts both on the
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from app.config import get_settings
 from app.integrations.zetaris.client import ZetarisError, get_zetaris_client
@@ -43,13 +45,22 @@ def statements() -> list[str]:
     ]
 
 
+def usl_statements() -> list[str]:
+    s = get_settings()
+    text = "\n".join(l for l in Path(__file__).with_name("usl.sql").read_text(encoding="utf-8").splitlines()
+                     if not l.startswith("--"))
+    return [st.strip().format(CONT=s.zetaris_continuity_ds, SHOP=s.zetaris_shop_ds, CAL=s.zetaris_calendar_db)
+            for st in text.split("\n;;") if st.strip()]
+
+
 def main() -> int:
     s = get_settings()
+    usl = "--usl" in sys.argv
     if not s.zetaris_url:
         print("ZETARIS_URL is not set; nothing to do.")
         return 1
     client = get_zetaris_client()
-    for sql in statements():
+    for sql in usl_statements() if usl else statements():
         try:
             client.query(sql)
             print(f"ok      {sql[:90]}")
@@ -60,6 +71,12 @@ def main() -> int:
             else:
                 print(f"FAILED  {sql[:90]}\n        {str(exc)[:300]}")
                 return 2
+    if usl:
+        table = f"{s.zetaris_usl}.workload"
+        res = client.query(f"RUN DQ TABLE {table}")
+        for row in res.rows:
+            print(f"dq      {row[0]:<30} {row[2]:<24} {row[4]}/{row[3]} valid")
+        return 0
     # Prove the federation end to end with the Continuity Guardian's own question.
     check = (
         f"SELECT c.change_id, w.application_name, w.owner_team FROM {s.zetaris_calendar_db}.change_calendar c "

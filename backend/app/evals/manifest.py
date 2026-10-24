@@ -87,6 +87,7 @@ def build_manifest() -> dict[str, Any]:
         "max_rounds": s.negotiation_max_rounds,
         "negotiation_timeout_s": s.negotiation_timeout_seconds,
         "zetaris_mode": get_business_context().mode,
+        "zetaris_query_layer": s.zetaris_query_layer,
         "embedder": getattr(get_hmem().embedder, "name", ""),
         "recall_threshold": s.hmem_recall_threshold,
         "traffic_rps": s.traffic_rps,
