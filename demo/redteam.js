@@ -56,7 +56,7 @@ async function select(id, scroll) {
   $("#rt-arena").className = "arena" + (two ? "" : " solo");
   $("#rt-arena").innerHTML = a.sides.map((s, i) => `${i ? '<div class="vs" aria-hidden="true"><span>VS</span></div>' : ""}
     <article class="side ${s.arch === "pact" ? "pact" : "naive"} glass">${sideHtml(s, i)}</article>`).join("")
-    + (two ? "" : `<p class="small solo-note">This attack targets RecoveryPact's own memory or business sources, so there is no single-agent run to compare.</p>`);
+    + (two ? "" : `<p class="small solo-note">This attack targets a part only RecoveryPact has (its memory, its business sources or its signed model answers), so there is no single-agent run to compare.</p>`);
   state.clock = Infinity;
   draw();
   if (scroll) $("#brief").scrollIntoView({ behavior: "smooth", block: "start" });
