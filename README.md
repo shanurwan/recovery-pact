@@ -250,6 +250,10 @@ The business context lives in three systems that know nothing about each other. 
 
 **The Unified Semantic Layer, with data quality as policy.** `backend/app/integrations/zetaris/usl.sql` compiles the business into a Zetaris USL, `recovery_business`: four tables (workload, owner, change_window, service_slo) activated from the federated sources, with descriptions, keys and five data-quality rules (`interruptible_is_replayable`, `protected_never_interrupted`, `policy_known`, `window_ordered`, `slo_sane`, plus the generated key checks). With `ZETARIS_QUERY_LAYER=usl` every guardian question reads the semantic layer, and every registry question first runs `RUN DQ` and `SHOW DQ ALL INVALID`, so each row arrives with Zetaris's own verdict. A row that fails can't vouch for a kill (invariant I9). **Recorded ([`zetaris-usl`](evals/results/zetaris-usl/summary.md), validator 219/219):** incident A through the semantic layer, 3/3 verified recovered, 24/24 business questions answered by the USL; red-team attack **J · a forged registry record** (an insider registers an unknown session as an interruptible batch job, but not replayable at any known cost), 3/3 refused: the forgery fooled the Database Guardian every time, twice the Continuity Guardian was ready to accept and the I9 override refused, once it read Zetaris's verdict and refused itself. The rules cost about 1.5 s per registry question.
 
+| The semantic layer in the Zetaris UI | Its data-quality rules |
+|---|---|
+| ![recovery_business in the Zetaris Unified Semantic Layer: four tables, keys and description](demo/img/zetaris-usl.png) | ![The data-quality rules registered on recovery_business](demo/img/zetaris-dq.png) |
+
 `scripts/zetaris-setup.sh` registers the sources (`CREATE DATASOURCE … REGISTER DATASOURCE TABLES`, `CREATE LIGHTNING FILESTORE TABLE`) through the Zetaris REST API with a read-only federation login. Every federated answer is stored as evidence with its exact SQL and latency, and the console shows it.
 
 ### Meterless: the AI runtime and the memory
