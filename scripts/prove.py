@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Re-check every published claim from the repository alone. No stack, no API key, no network.
 
-    python scripts/prove.py            # Python 3.9+, standard library; Node 18+ for the signatures
+    python scripts/prove.py            # Python 3.9+, standard library only (Node 18+, if present, checks signatures faster)
 
 1. results    every result directory in evals/results is re-validated from its raw traces
               (the same independent validator as `python -m app.evals.validate`)
@@ -83,11 +83,13 @@ def check_receipts() -> None:
     script = ROOT / "scripts" / "nightshift-verify-receipts.mjs"
     for d in sorted(p for p in RESULTS.iterdir() if (p / "receipts.signed.jsonl").exists()):
         joined = json.loads((d / "receipts.json").read_text(encoding="utf-8"))["rows"]
-        if not node:
-            report("NOT RUN", f"{d.name} receipts", "Node 18+ not found (needed for Ed25519)")
-            continue
-        out = json.loads(subprocess.run([node, str(script), str(d / "receipts.signed.jsonl")],
-                                        capture_output=True, text=True, check=True).stdout or "{}")
+        if node:
+            out = json.loads(subprocess.run([node, str(script), str(d / "receipts.signed.jsonl")],
+                                            capture_output=True, text=True, check=True).stdout or "{}")
+        else:  # no Node: the same check in pure Python (scripts/ed25519_verify.py)
+            sys.path.insert(0, str(ROOT / "scripts"))
+            from ed25519_verify import check_file
+            out = check_file(str(d / "receipts.signed.jsonl"))
         tamper = out.pop("_tamper_check", None) or {}
         ok = [r for r in joined if (out.get(r["response_id"]) or {}).get("verified")]
         keys = {v["key"] for v in out.values()}

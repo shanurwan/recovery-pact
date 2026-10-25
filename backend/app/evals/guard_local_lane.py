@@ -10,8 +10,8 @@ chat_template_kwargs, so the native custom_policy configuration cannot run this 
 
 For every call it keeps the completion id, the route Nightshift reports (kind local or
 cloud, the routed model), and the signed receipt fetched from the read-only relay
-(METERLESS_RECEIPTS_URL). receipts.signed.jsonl holds those envelopes unmodified, for
-scripts/nightshift-verify-receipts.mjs.
+(METERLESS_RECEIPTS_URL). receipts.signed.jsonl holds those envelopes unmodified, so
+scripts/prove.py re-verifies every signature offline.
 """
 
 from __future__ import annotations
