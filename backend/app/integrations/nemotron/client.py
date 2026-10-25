@@ -136,9 +136,25 @@ class InferenceClient:
         to_nim = model in direct or call_key.startswith("guard/")
         provider = "nvidia" if self.provider == "meterless" and to_nim and self.api_key else self.provider
         local_url = self.settings.guard_local_map.get(model) if to_nim else None
-        if local_url:
+        if local_url == "nightshift":
+            provider = "nightshift-local"
+        elif local_url:
             provider = "local"
-        if provider == "local":
+        if provider == "nightshift-local":
+            # The guard model on this machine, reached through Nightshift's local lane: the
+            # app rule keeps the text on the machine and every answer gets a signed receipt.
+            url = f"{meterless.normalize_base_url(self.settings.meterless_base_url)}/chat/completions"
+            hdrs = {
+                **meterless.headers(self.settings.meterless_runtime_token, chat=True),
+                "meterless-app": self.settings.meterless_local_app,
+                "meterless-tier-split": "off",
+                "meterless-scope": f"recovery-pact-call-{uuid.uuid4().hex[:12]}",
+            }
+            wire_model = "meterless/local"
+            timeout = max(self.timeout, meterless.TIMEOUT_S)
+            # Nightshift does not forward chat_template_kwargs, so a native custom_policy is lost.
+            extra = {k: v for k, v in extra.items() if k != "chat_template_kwargs"}
+        elif provider == "local":
             # A guard model on this machine: the untrusted text it screens never leaves it.
             url = f"{local_url}/chat/completions"
             hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -209,6 +225,9 @@ class InferenceClient:
                     "served_by": data.get("model") or wire_model,
                     # Nightshift's signed receipt for this call carries the same id (receipt.request_id).
                     "response_id": data.get("id"),
+                    "receipt_id": (data.get("meterless") or {}).get("receipt_id"),
+                    "route_kind": ((data.get("meterless") or {}).get("winning_route") or {}).get("kind"),
+                    "routed_model": (data.get("meterless") or {}).get("routed_model"),
                     "latency_ms": round(latency, 1),
                     "prompt_tokens": usage.get("prompt_tokens"),
                     "completion_tokens": usage.get("completion_tokens"),

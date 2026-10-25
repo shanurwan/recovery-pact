@@ -78,7 +78,10 @@ class Settings(BaseSettings):
     # Guard models served on this machine instead of the NVIDIA API (OpenAI-compatible, e.g. llama.cpp),
     # so untrusted production text never leaves it:
     # GUARD_LOCAL="nvidia/nemotron-3.5-content-safety=http://127.0.0.1:8091/v1,nvidia/llama-3.1-nemotron-safety-guard-8b-v3=http://127.0.0.1:8092/v1"
+    # A value of "nightshift" sends that guard model through Nightshift's local lane instead
+    # (meterless/local, under the app id below, which Nightshift binds to on-machine models only).
     guard_local: str = ""
+    meterless_local_app: str = "recoverypact-guard"
     recordings_dir: str = "./recordings"  # shipped recordings, read by replay
     record_dir: str = "./data/recordings"  # where live runs write new recordings
     embedding_model: str = "nvidia/nemotron-3-embed-1b"

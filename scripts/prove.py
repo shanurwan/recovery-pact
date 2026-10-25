@@ -176,6 +176,12 @@ def check_sponsors() -> None:
            "Nightshift receipts enforce lanes",
            f"guardians pinned to Super VL; the Business AI's answer was signed by {winners.get('cg-r1-a1', '?').split('/')[-1]}; "
            f"refused: {'; '.join(caught) or 'no'}")
+    local = json.loads((RESULTS / "guard-local-lane" / "receipts.json").read_text(encoding="utf-8"))["rows"]
+    on_machine = [r for r in local if r["kind"] == "local" and r["privacy"] == "local-only" and "nemotron" in (r["winner"] or "")]
+    report("OBSERVED" if local and len(on_machine) == len(local) else "NOT OBSERVED",
+           "Nemotron on our own machine through Nightshift",
+           f"{len(on_machine)}/{len(local)} guard calls signed as served locally (local-only) by "
+           f"{', '.join(sorted({r['winner'].split('/')[-1] for r in on_machine})) or 'none'}")
     vec = ROOT / "tests" / "meterless" / "vectors.json"
     report("OBSERVED" if vec.exists() else "NOT OBSERVED", "Meterless H-MEM",
            "conformance vectors in tests/meterless (run: pytest tests -k hmem)")

@@ -97,3 +97,51 @@ def test_guard_local_map_routes_named_models_only(monkeypatch):
     s = get_settings()
     monkeypatch.setattr(s, "guard_local", "nvidia/nemotron-3.5-content-safety=http://127.0.0.1:8091/v1/ ,bad-entry")
     assert s.guard_local_map == {"nvidia/nemotron-3.5-content-safety": "http://127.0.0.1:8091/v1"}
+
+
+def test_guard_through_nightshift_local_lane(monkeypatch, tmp_path):
+    """GUARD_LOCAL=<model>=nightshift: meterless/local under the guard's app id, kwargs dropped, receipt kept."""
+    import httpx
+
+    from app.integrations.nemotron.client import InferenceClient
+
+    s = get_settings()
+    monkeypatch.setattr(s, "guard_local", "nvidia/nemotron-3.5-content-safety=nightshift")
+    monkeypatch.setattr(s, "meterless_base_url", "http://127.0.0.1:8088/v1")
+    monkeypatch.setattr(s, "meterless_runtime_token", "test-token")
+    sent = {}
+
+    class FakeResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "chatcmpl-1", "choices": [{"message": {"content": "User Safety: safe"}}],
+                    "meterless": {"receipt_id": "rcpt_req_1", "routed_model": "local-runtime/nemotron-cs",
+                                  "winning_route": {"kind": "local"}}}
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, headers, json):
+            sent.update(url=url, headers=headers, body=json)
+            return FakeResp()
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    client = InferenceClient()
+    client.mode, client.record_dir = "nemotron", tmp_path
+    _, m = client._chat("nvidia/nemotron-3.5-content-safety", [{"role": "user", "content": "x"}], "guard/cs-1",
+                        {"chat_template_kwargs": {"custom_policy": "p"}, "max_tokens": 40}, False)
+    assert sent["url"] == "http://127.0.0.1:8088/v1/chat/completions"
+    assert sent["body"]["model"] == "meterless/local" and "chat_template_kwargs" not in sent["body"]
+    assert sent["headers"]["meterless-app"] == s.meterless_local_app
+    assert (m["provider"], m["route_kind"], m["receipt_id"]) == ("nightshift-local", "local", "rcpt_req_1")
