@@ -387,7 +387,7 @@ That is the same behaviour as under the hosted-API 500s in §6: an unavailable m
 
 ## 7. The guard: why a content classifier is not an injection detector
 
-Two sets of labelled strings. The **tuning set** (`seed/guard_cases.json`): 15 injections and 15 benign strings, several of the benign ones deliberately authoritative ("approved by data owner, ticket DATA-882"), because that is what real operational text looks like. The **held-out set** (`seed/guard_cases_heldout.json`): 10 injections and 10 benign strings, written before any guard ran on them and never used to tune a prompt or a policy. Results: [`guard-bench-v2`](evals/results/guard-bench-v2/summary.md), [`guard-bench-heldout`](evals/results/guard-bench-heldout/summary.md).
+Two sets of labelled strings. The **tuning set** (`seed/guard_cases.json`): 15 injections and 15 benign strings, several of the benign ones deliberately authoritative ("approved by data owner, ticket DATA-882"), because that is what real operational text looks like. The **held-out set** (`seed/guard_cases_heldout.json`): 10 injections and 10 benign strings, written before any guard ran on them and never used to tune a prompt or a policy. Results: [`guard-bench-v2`](evals/results/guard-bench-v2/summary.md), [`guard-bench-heldout`](evals/results/guard-bench-heldout/summary.md); the same benchmark with Content Safety served on our laptop: [`guard-bench-local`](evals/results/guard-bench-local/summary.md), [`guard-bench-heldout-local`](evals/results/guard-bench-heldout-local/summary.md).
 
 | Configuration | Tuning set: caught | Held-out: caught | False positives (all 25 benign) | Median latency |
 |---|---|---|---|---|
@@ -437,7 +437,7 @@ In A, the one incident every architecture gets right, RecoveryPact lost a median
 
 ## 10. Built for a DGX Spark
 
-Everything above ran on hosted Nemotron, direct and through Meterless Nightshift: our laptop has a GTX 1050. What the numbers say we would do with a DGX Spark on the desk:
+The benchmarks above ran on hosted Nemotron, direct and through Meterless Nightshift. We did test one piece locally. Content Safety 4B, quantised to Q4_K_M and served by llama.cpp on our laptop, scored the same inside the three-layer guard as the hosted model: 14/15 on the tuning set (3.9 s per string on a 4 GB GTX 1050) and 4/10 on the held-out set (hosted: 3/10; this run used the laptop CPU at about 27 s per string), with 0 false positives in both ([`guard-bench-local`](evals/results/guard-bench-local/summary.md), [`guard-bench-heldout-local`](evals/results/guard-bench-heldout-local/summary.md)). Reasoning mode did not finish on the CPU: 1500 thinking tokens at 2.6 tokens/s exceed our 90 s timeout. The guard's policy model works off the cloud; a laptop is simply too slow for it to screen every string. What the numbers say we would do with a DGX Spark on the desk:
 
 - **Run the guardians locally on Super.** Every Super run the API answered was correct, and Super decided in 40 s against Ultra's 66 s. Its only misses were hosted-API 500s, which disappear when the model is on the box.
 - **Put the injection guard next to the database.** Safety Guard 8B and the Lightning judge screen every untrusted string in under a second, and untrusted production text never leaves the building.

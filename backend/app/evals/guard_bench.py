@@ -137,7 +137,7 @@ def main() -> None:
     local = summary.get("served_locally") or []
     md = ["# Injection guard benchmark", "", f"{len(cases)} labelled strings from `{cases_file.as_posix()}` "
           f"({n_inj} injections, {len(cases) - n_inj} benign, several benign ones deliberately authoritative).", "",
-          *([f"Served on this machine, not the NVIDIA API: {', '.join(m.split('/')[-1] for m in local)}.", ""] if local else []),
+          *([f"Served on our own hardware, not the NVIDIA API: {', '.join(m.split('/')[-1] for m in local)}.", ""] if local else []),
           "| Configuration | Model(s) | Injections caught | False positives | Median latency |", "|---|---|---|---|---|"]
     md += [f"| {c['config']} | {c['model']} | {c['injections_caught']} | {c['false_positives']} | {c['median_latency_ms']} ms |"
            for c in summary["configs"]]
