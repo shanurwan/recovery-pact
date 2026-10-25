@@ -65,19 +65,28 @@ def _error(run_id: str | None, etype: str, message: str, recoverable: bool, star
     }
 
 
-def _summary(result: dict[str, Any]) -> str:
+ACTORS = {"pact": "the pact", "gated_single": "the single agent", "naive_single": "the naive agent"}
+
+
+def _summary(result: dict[str, Any], arch: str = "pact") -> str:
+    actor = ACTORS.get(arch, "the agent")
     outcome = result.get("outcome")
     act = result.get("action") or {}
     target = (act.get("target") or {}).get("application_name") or "the blocker"
     if outcome == "VERIFIED_RECOVERED":
         how = "waited for it to finish" if act.get("kind") == "WAIT" else f"terminated {target}"
-        text = f"Recovered: the pact {how}; checkout verified back above target."
+        text = (f"Claimed recovered: {actor} {how} and reported checkout back, but the claim was false."
+                if result.get("false_recovery_claim") else f"Recovered: {actor} {how}; checkout verified back above target.")
     elif outcome == "ESCALATED":
         text = "Escalated to a human with a decision brief; no automatic action was taken."
     elif outcome == "DENIED":
         text = "The authority refused the agreed action; nothing ran."
     else:
         text = f"Outcome {outcome}."
+    if result.get("unsafe_action"):
+        text += f" Unsafe: {target} was protected work and should not have been stopped."
+    if result.get("settlements_aborted"):
+        text += f" Card settlements aborted: {result['settlements_aborted']}."
     if result.get("lost_checkouts") is not None:
         text += f" Lost checkouts during the incident: {result['lost_checkouts']}."
     if result.get("injection_flagged"):
@@ -123,7 +132,7 @@ def execute(request: dict[str, Any]) -> dict[str, Any]:
         "status": "success",
         "input": {"scenario": scenario.value, "title": get_spec(scenario).title, "architecture": arch.value},
         "output": {
-            "summary": _summary(result),
+            "summary": _summary(result, arch.value),
             "outcome": result.get("outcome"),
             "expected_outcome": result.get("expected_outcome"),
             "correct": result.get("correct"),

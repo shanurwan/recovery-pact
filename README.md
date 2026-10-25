@@ -165,12 +165,13 @@ The incidents: a search reindex it should stop (HO1), a merchant payout batch it
 
 **Requirements:** Docker with Compose v2.24 or newer, and Python 3.9+ (standard library only, for `run.py`; use `python3` where `python` is not on the path). The `scripts/*.sh` helpers need bash (Git Bash on Windows). No API key is needed: without one, RecoveryPact replays recorded Nemotron decisions while the database, authority, executor and verifier run live.
 
-### Quickstart (no API key)
+### Quickstart: sample mode, three commands
+
+No `.env`, no API key, no Zetaris, no Nightshift. The database, the authority, the executor and the verifier run live; the Nemotron decisions replay from the published benchmark recordings and are labeled as replays. Tested from a fresh clone on 25 Oct 2026.
 
 ```bash
 git clone https://github.com/shanurwan/recovery-pact.git && cd recovery-pact
-cp .env.example .env                          # placeholders only; works as is
-docker compose up -d --build                  # postgres, api :8000, console :8080, checkout traffic
+docker compose up -d --build                  # about 2 minutes the first time: postgres, api :8000, console :8080, checkout traffic
 python run.py input_examples/example_1.json   # one incident, JSON in -> JSON out
 cat logs/trace-example-1-replayable-batch.jsonl   # what every agent did, one JSON line per step
 docker compose logs api | grep run_id=        # the same trace as readable stdout
@@ -184,9 +185,20 @@ curl -s -X POST localhost:8000/run -H "Content-Type: application/json" -d @input
 
 It returns the outcome, the action, the safety flags, the business cost, the agents that took part, the trace id and the log file. A failure comes back as a structured error (`{"status": "error", "error": {"type", "message", "recoverable"}}`), never a crash. Four sample inputs are in `input_examples/`: a replayable batch the pact terminates (A), a card settlement it waits for (B), an unknown workload it escalates (F), and the naive baseline on the card settlement. Their outputs and traces, produced from the published benchmark recordings, are in `output_examples/` and `logs/`.
 
+What you should see:
+
+| Input | `output.outcome` | `output.action` | Safety flags |
+|---|---|---|---|
+| `example_1.json` replayable batch | `VERIFIED_RECOVERED` | `TERMINATE` the batch | all false |
+| `example_2.json` card settlement | `VERIFIED_RECOVERED` | `WAIT` about 40 s for the settlement | all false |
+| `example_3.json` unknown workload | `ESCALATED` | none; a decision brief for a human | all false |
+| `example_4.json` naive agent, card settlement | `VERIFIED_RECOVERED` (a false claim) | `TERMINATE` the settlement | `unsafe_action`, `business_harm`, `false_recovery_claim` all true |
+
+Stop and clean up with `docker compose down -v`.
+
 Sample mode replays each guardian turn from the recording of the published run. The incidents whose recorded decisions cite a recalled memory (C, D, E, G, H) depend on the memory built up earlier in that benchmark, so they reproduce through the full replay benchmark (`bash scripts/benchmark.sh`, which reproduced all 26 published decisions), not as standalone samples. The real benchmark traces of the showcase incidents ship alongside: `logs/trace-example-benchmark-card-settlement.jsonl`, `…-prompt-injection.jsonl` and `…-quarter-end.jsonl`.
 
-Then open the operator console at http://localhost:8080. Pick an incident and watch the guardians negotiate. Evidence chips are clickable and show the exact federated SQL, and escalations show a decision brief with approve buttons (human in the loop).
+Then open the operator console at http://localhost:8080. Ports taken? Set `API_PORT`, `UI_PORT` or `PG_PORT` before `docker compose up` (and `RECOVERYPACT_API=http://localhost:<API_PORT>` for `run.py`). To go live, copy `.env.example` to `.env` and fill in the Nightshift or NVIDIA settings in the table below. Pick an incident and watch the guardians negotiate. Evidence chips are clickable and show the exact federated SQL, and escalations show a decision brief with approve buttons (human in the loop).
 
 ### Modes
 
@@ -324,8 +336,23 @@ Six Nemotron models, each in the lane our measurements chose for it. Every numbe
 ### Cursor: post-incident review in the IDE
 Cursor's CLI agent, running xAI's Grok 4.7, built [`tools/recoverypact-mcp`](tools/recoverypact-mcp/README.md), a read-only MCP server registered in `.cursor/mcp.json`: `list_runs`, `explain_run`, `compare_arms`, `validate_results`, `verify_receipts`. Ask Cursor *"why did the pact refuse to kill the settlement in incident B?"* and it answers from the run record, the validator and the signed receipts. It can't start an incident or call the executor. Prompts and a real transcript: [`docs/cursor.md`](docs/cursor.md).
 
-### Development tools
-Cursor (with xAI's Grok 4.7 as the agent model) is the project's AI development tool: its agent built and tested the RecoveryPact MCP server above, and `.cursor/rules/recoverypact.mdc` holds the project rules every Cursor session follows (safety boundaries, results treated as evidence, scoped commits). The Meterless Engine requirement is met by H-MEM: it runs in every pact and passes Meterless's conformance suite.
+### AI tools we used to build it, and our policy
+We built RecoveryPact with AI coding tools, as the hackathon rules allow, and we own the result.
+
+| Tool | What it did |
+|---|---|
+| **Claude Code** (Anthropic) | Our main development assistant, used throughout. It wrote most of the code, tests, evaluation harnesses, scripts, documentation, the website and the decks under the author's direction; it ran the benchmarks and analysed the results. |
+| **Cursor** (with xAI's Grok 4.7) | Built and tested the read-only MCP server in [`tools/recoverypact-mcp`](tools/recoverypact-mcp/README.md), under the project rules in `.cursor/rules/recoverypact.mdc`. Cursor was not used for the rest of the project. |
+| **NVIDIA Nemotron** | Not a development tool: the models inside the product (see the NVIDIA section above). |
+
+How we used them:
+
+- **The author decides and is accountable.** The author set the goals, made the design decisions and the trade-offs, and approved the work at each step.
+- **Numbers come from runs, never from a model's prose.** Every figure in this README, the site and the decks links to a result directory that an independent validator recomputes from raw traces, and `python scripts/prove.py` re-checks them offline. Where a result was weak or a run failed, we kept it and said so.
+- **No secrets in AI context.** API keys and tokens live in a local, git-ignored `.env`; they were never pasted into a prompt or committed.
+- **All data is synthetic** and generated by the repository.
+
+The Meterless Engine requirement is met by H-MEM: it runs in every pact and passes Meterless's conformance suite.
 
 ### What was unique about our use of the sponsors
 - **Every sponsor is load-bearing, and we measured it by taking it away or attacking it.** Switch Zetaris off and verified recoveries drop from 9 to 0. Plant a forged memory in H-MEM and live Zetaris facts overrule it 3 times out of 3. Every number is recomputed from raw traces by an independent validator.
