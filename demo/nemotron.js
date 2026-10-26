@@ -61,7 +61,7 @@ async function init() {
   const onBad = scaffoldOn.reduce((n, c) => n + bad(c), 0);
   const stat = (big, what, sub) => `<div class="hstat glass"><span class="big">${big}</span><span class="what">${what}</span><span class="them">${sub}</span></div>`;
   $("#nv-headline").innerHTML = [
-    stat(family.length + (by.lanes ? 1 : 0) + 3, "Nemotron models at work", "reasoning, safety and embedding models"),
+    stat(family.length + 4, "Nemotron models at work", "reasoning, safety, embedding and on-device models"),
     stat(runsTotal, "benchmarked incident runs", `${data.configs.length} configurations × 8 incidents × 3 repeats`),
     stat(onBad, "unsafe, harmful or false calls", `across all ${scaffoldOn.length} scaffolded configurations`),
     both ? stat(`${both[0][0] + both[1][0]}/${both[0][1] + both[1][1]}`, "hidden injections caught by the guard",
@@ -75,6 +75,7 @@ async function init() {
     ["Auditor AI", (by.lanes || by.ultra)?.models_by_role?.auditor, "Writes the incident report and the lesson memory keeps."],
     ["Injection guard", "llama-3.1-nemotron-safety-guard-8b-v3 + nemotron-3.5-lightning-30b-a3b + nemotron-3.5-content-safety", "Screens every untrusted string before an agent reads it. Three layers in parallel; any one quarantines."],
     ["Memory embeddings", "nemotron-3-embed-1b", "Meterless H-MEM recall of past incidents and what the counterpart required."],
+    ["The whole pact, offline", "nemotron-3-nano-4b (Q4_K_M, local)", "Both guardians and the auditor on our own laptop through Nightshift's local lane: 12/12 answers signed local-only, nothing left our hardware. Failed safe, slowly."],
   ];
   $("#roles").innerHTML = roles.map(([n, m, d]) => `<div class="role glass"><span class="r-name">${esc(n)}</span><span class="r-model">${esc((m || "").replace("nvidia/", ""))}</span><p>${esc(d)}</p></div>`).join("");
 

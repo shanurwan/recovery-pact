@@ -6,6 +6,8 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 
 > Recovery isn't real until the business is back.
 
+**It acts, it doesn't just advise.** RecoveryPact takes the real action, `pg_terminate_backend` on a live PostgreSQL session, and only after two Nemotron guardians agree, a deterministic authority checks the business's own records through Zetaris, and a Meterless Nightshift signature proves which Nemotron model proposed it. Then it calls nothing fixed until checkout is measured back.
+
 **▶ Watch it, no install: [recovery-pact.wnswaz.win](https://recovery-pact.wnswaz.win)**. These are real recorded runs, a typical AI agent next to RecoveryPact on the same incident.
 
 | See it in a browser | What you'll see |
@@ -25,7 +27,7 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 > 3. **On incidents we did not write.** Eighteen incidents were written by a separate AI session that never saw our code, and frozen before any run. RecoveryPact: **16/18, 0 unsafe**. The baselines: 5/18 and 6/18, with 9 unsafe. Both misses are kept and explained. [Blind round 2](#results)
 > 4. **Try to break it.** Eight attacks over 45 recorded runs gave 0 unsafe actions. Attack 9 forged Nightshift's signature: **0 of 5,896 forged receipts** moved the authority. [Red team](https://recovery-pact.wnswaz.win/redteam.html) · [receipt log](https://recovery-pact.wnswaz.win/receipts.html)
 > 5. **Every sponsor is measured by removing or attacking it.** Switch Zetaris off and verified recoveries drop from 9 to 0. Every Nemotron answer we acted on carries a Meterless Nightshift receipt the authority verifies (548/548). [Sponsor technology](#sponsor-technology)
-> 6. **DGX Spark.** The whole pact already runs with nothing leaving our hardware: both guardians and the auditor were Nemotron on our laptop through Nightshift's local lane, every answer signed `local-only`. It failed safe, though slowly and too cautiously on a laptop CPU. A Spark supplies the model size and speed. [Why a DGX Spark](#nvidia-where-nemotron-contributes-model-by-model)
+> 6. **Best use of Nemotron.** Seven Nemotron models, each in the job our measurements chose for it: Ultra, Super VL and Lightning reason, Safety Guard 8B and Content Safety 4B screen, Embed 1B recalls, Nano 4B runs the whole pact offline. Nemotron's provenance decides what runs: no signed receipt naming a Nemotron model from that role's lane, no action (I8). And the whole pact already runs with nothing leaving our hardware, every answer signed `local-only`. It failed safe, slowly, on a laptop CPU; a DGX Spark supplies the model size and speed. [Nemotron, model by model](#nvidia-where-nemotron-contributes-model-by-model)
 
 ---
 
@@ -342,7 +344,7 @@ Agents ask for a logical Nemotron model and `METERLESS_ROUTES` maps it to a Nigh
 Memory is weak evidence by design. It may change what the guardians check first, and it may veto a repeat of a failed action (M1), but it can never authorize one.
 
 ### NVIDIA: where Nemotron contributes, model by model
-Six Nemotron models, each in the lane our measurements chose for it. Every number links to a result directory the validator recomputed from raw traces.
+Seven Nemotron models, each in the lane our measurements chose for it. Every number links to a result directory the validator recomputed from raw traces.
 
 | Nemotron model | Job in RecoveryPact | Why this model here, measured | Evidence |
 |---|---|---|---|
@@ -351,6 +353,7 @@ Six Nemotron models, each in the lane our measurements chose for it. Every numbe
 | Nemotron 3.5 Lightning 30B-A3B | The guard's reasoning judge; the auditor's fast lane | With our scaffold, 20/24 and 0 unsafe on 3B active parameters; without it, 14/24 | [`family-lightning`](evals/results/family-lightning/summary.md), [`ablation-lightning-no-scaffold`](evals/results/ablation-lightning-no-scaffold/summary.md) |
 | Llama 3.1 Nemotron Safety Guard 8B v3 | Guard layer 1, on every untrusted string | Fastest layer (0.6 s) | [`guard-bench-v2`](evals/results/guard-bench-v2/summary.md) |
 | Nemotron 3.5 Content Safety 4B | Guard layer 3, enforcing our own written policy | As a native `custom_policy`: 14/15 on the tuning set, 0 false positives; the same text pasted into the prompt caught 10/15. Also run on our own laptop (Q4_K_M, llama.cpp): the three-layer guard scored 14/15 and 4/10, 0 false positives. And served through Nightshift's local lane: 100/100 calls signed as `local`, `local-only` | [`guard-bench-v2`](evals/results/guard-bench-v2/summary.md), [`guard-bench-heldout`](evals/results/guard-bench-heldout/summary.md), [`guard-bench-local`](evals/results/guard-bench-local/summary.md), [`guard-bench-heldout-local`](evals/results/guard-bench-heldout-local/summary.md), [`guard-local-lane`](evals/results/guard-local-lane/summary.md) |
+| Nemotron 3 Nano 4B | The whole pact, offline: both guardians and the auditor on our laptop's CPU through Nightshift's local lane | 12/12 answers signed `local-only`, no NVIDIA key in the container, rule I8 pinning every turn to the on-machine model. Failed safe: 0/2 right, 0 unsafe, both escalated to a human | [`local-pact`](evals/results/local-pact/summary.md) |
 | Nemotron 3 Embed 1B | H-MEM recall | A forged memory is recalled and then overruled by live Zetaris records, 3/3 | [`poisoned-memory`](evals/results/poisoned-memory/summary.md) |
 
 **Which calls went through Nightshift.** The reasoning calls (both guardians and the auditor) go through Meterless Nightshift, and each of their 233 signed receipts names the Nemotron model that answered: Ultra 550B, Super VL 120B or Lightning 30B. Content Safety 4B also runs through Nightshift's **local lane on our own laptop**: we bound the app `recoverypact-guard` to `meterless/local`, and all 100 guard calls came back signed as `kind: local`, `privacy: local-only` by the on-machine Nemotron; all 100 signatures re-verify offline against the same pinned key (`python scripts/prove.py`) ([`guard-local-lane`](evals/results/guard-local-lane/summary.md)). Nightshift does not forward `chat_template_kwargs`, so Content Safety's native custom policy (our best guard layer) cannot run through it; the runtime guard therefore calls Safety Guard 8B, Content Safety with its native policy and Embed 1B on the NVIDIA API directly. Those calls carry no receipt, and the authority never relies on them to permit an action: a guard can only quarantine text.
@@ -388,7 +391,7 @@ The Meterless Engine requirement is met by H-MEM: it runs in every pact and pass
 - **Nightshift's signed receipts decide what may run.** Most projects log which model answered. Here the authority refuses to touch the database unless a pinned-key Nightshift receipt proves a Nemotron model gave the answer (rule I8).
 - **Memory that may veto, never permit.** H-MEM, our own implementation passing Meterless's 13/13 conformance suite, stops a known-bad fix from being repeated, but no memory can authorize an action.
 - **Zetaris as the business's voice in a negotiation.** One federated SQL statement per business question, cited as evidence by an AI whose only mandate is the business, against an AI whose mandate is the database.
-- **The whole Nemotron family, compared on one benchmark,** plus Nemotron safety models screening every untrusted string from production before an agent reads it.
+- **Seven Nemotron models, the whole family compared on one benchmark,** plus Nemotron safety models screening every untrusted string from production before an agent reads it.
 - **Cursor turns the evidence into an IDE workflow:** a read-only MCP server so an engineer can ask "why did the pact refuse?" and get the answer from the trace, the validator and the receipts.
 
 ---

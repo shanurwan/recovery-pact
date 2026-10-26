@@ -73,7 +73,7 @@ def main() -> int:
             continue
         win = (r.get("winning_route") or {}).get("model") or (r.get("routing") or {}).get("winner")
         rows.append({
-            "run_id": run_id, "scenario": "_".join(scenario.split("_")[:2]) if scenario.startswith("B2_") else scenario[:1], "actor": actor, "call_key": m["call_key"],
+            "run_id": run_id, "scenario": "_".join(scenario.split("_")[:2]) if scenario.startswith(("B2_", "B3_")) else scenario[:1], "actor": actor, "call_key": m["call_key"],
             "response_id": m.get("response_id"), "route": m.get("route"), "winner": win,
             "egress": (r.get("egress") or {}).get("destination"), "hmem": (r.get("hmem") or {}).get("injected") or 0,
             "raced": (r.get("routing") or {}).get("width"), "status": r.get("status"),
