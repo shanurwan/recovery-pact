@@ -176,3 +176,15 @@ def test_provenance_is_sealed_into_the_contract_digest():
     c = _contract([call()])
     c.model_provenance[0]["response_id"] = "chatcmpl-swapped"
     assert not c.verify_digest()
+
+
+def test_local_lane_answer_verifies(pinned, monkeypatch):
+    # Nightshift's local lane: the prompt never left the machine (egress "none") and the
+    # winner is the on-machine model; the call came through the local lane, not the cloud route.
+    monkeypatch.setattr(pinned, "receipt_egress", "nvidia,local,none")
+    monkeypatch.setattr(pinned, "receipt_models", "nvidia/nemotron,local-runtime/nvidia-nemotron")
+    nano = "local-runtime/nvidia-nemotron3-nano-4b-q4-k-m"
+    env = envelope(model=nano, dest="none")
+    monkeypatch.setattr(receipts, "fetch", lambda rid, wait_s=0: env)
+    [r] = receipts.verify_calls([{**call(model=nano), "provider": "nightshift-local"}], NOW_MS - 1000)
+    assert r["ok"], r["failed"]

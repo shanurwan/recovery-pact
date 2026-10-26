@@ -135,13 +135,19 @@ class InferenceClient:
         direct = {m.strip() for m in self.settings.meterless_direct_models.split(",") if m.strip()}
         to_nim = model in direct or call_key.startswith("guard/")
         provider = "nvidia" if self.provider == "meterless" and to_nim and self.api_key else self.provider
-        local_url = self.settings.guard_local_map.get(model) if to_nim else None
+        # A model served on this machine (GUARD_LOCAL): the guard models, or a whole local pact.
+        local_url = self.settings.guard_local_map.get(model)
+        local_pin = ""
+        if local_url and local_url.startswith("nightshift"):
+            # "nightshift" lets the local lane pick; "nightshift:<local model id>" pins one on-machine model.
+            local_pin = local_url.partition(":")[2]
+            local_url = "nightshift"
         if local_url == "nightshift":
             provider = "nightshift-local"
         elif local_url:
             provider = "local"
         if provider == "nightshift-local":
-            # The guard model on this machine, reached through Nightshift's local lane: the
+            # A model on this machine, reached through Nightshift's local lane: the
             # app rule keeps the text on the machine and every answer gets a signed receipt.
             url = f"{meterless.normalize_base_url(self.settings.meterless_base_url)}/chat/completions"
             hdrs = {
@@ -150,7 +156,7 @@ class InferenceClient:
                 "meterless-tier-split": "off",
                 "meterless-scope": f"recovery-pact-call-{uuid.uuid4().hex[:12]}",
             }
-            wire_model = "meterless/local"
+            wire_model = local_pin or "meterless/local"
             timeout = max(self.timeout, meterless.TIMEOUT_S)
             # Nightshift does not forward chat_template_kwargs, so a native custom_policy is lost.
             extra = {k: v for k, v in extra.items() if k != "chat_template_kwargs"}

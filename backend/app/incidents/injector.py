@@ -179,7 +179,10 @@ class IncidentInjector:
             max_overflow=1,
             connect_args={"options": f"-c application_name={spec.application_name}"},
         )
-        deadline = time.time() + spec.hold_seconds
+        # A pact deciding on a laptop CPU takes minutes per call: INCIDENT_HOLD_SCALE stretches how long
+        # a job that does not finish on its own keeps its lock, so the incident is still live when it acts.
+        scale = 1.0 if spec.completes_on_its_own else get_settings().incident_hold_scale
+        deadline = time.time() + spec.hold_seconds * scale
         try:
             while not inc.stop_event.is_set():
                 result = self._hold_once(engine, inc, ready, deadline)

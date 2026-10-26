@@ -133,7 +133,7 @@ def verify_calls(calls: list[dict[str, Any]], not_before_ms: int | None = None) 
     """Fetch and check the receipt of each model call; calls not served by Nightshift have none."""
     results = []
     for call in calls:
-        if call.get("provider") != "meterless":
+        if call.get("provider") not in ("meterless", "nightshift-local"):
             results.append({"call_key": call.get("call_key"), "request_id": call.get("response_id"), "ok": False,
                             "failed": ["not served through Nightshift, so nothing signed it"]})
             continue

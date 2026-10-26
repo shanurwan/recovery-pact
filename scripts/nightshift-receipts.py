@@ -65,7 +65,7 @@ def main() -> int:
     tamper = sigs.pop("_tamper_check", None)
     rows, missing = [], []
     for run_id, scenario, actor, m in calls(result_dir):
-        if m.get("provider") != "meterless":
+        if m.get("provider") not in ("meterless", "nightshift-local"):
             continue  # e.g. the safety classifier, which the runtime catalog does not serve
         r = recs.get(m.get("response_id") or "")
         if r is None:
@@ -73,7 +73,7 @@ def main() -> int:
             continue
         win = (r.get("winning_route") or {}).get("model") or (r.get("routing") or {}).get("winner")
         rows.append({
-            "run_id": run_id, "scenario": scenario[:1], "actor": actor, "call_key": m["call_key"],
+            "run_id": run_id, "scenario": "_".join(scenario.split("_")[:2]) if scenario.startswith("B2_") else scenario[:1], "actor": actor, "call_key": m["call_key"],
             "response_id": m.get("response_id"), "route": m.get("route"), "winner": win,
             "egress": (r.get("egress") or {}).get("destination"), "hmem": (r.get("hmem") or {}).get("injected") or 0,
             "raced": (r.get("routing") or {}).get("width"), "status": r.get("status"),

@@ -145,3 +145,10 @@ def test_guard_through_nightshift_local_lane(monkeypatch, tmp_path):
     assert sent["body"]["model"] == "meterless/local" and "chat_template_kwargs" not in sent["body"]
     assert sent["headers"]["meterless-app"] == s.meterless_local_app
     assert (m["provider"], m["route_kind"], m["receipt_id"]) == ("nightshift-local", "local", "rcpt_req_1")
+
+
+def test_guard_layers_setting_runs_only_the_listed_layers(layers, monkeypatch):
+    # A fully local pact on a laptop CPU runs the on-machine Content Safety layer alone.
+    monkeypatch.setattr(get_settings(), "guard_layers", "content_safety")
+    v = guard_mod.get_guard().screen(INJECTION)
+    assert v.unsafe and set(v.layers) == {"content_safety"} and layers["n"] == 1

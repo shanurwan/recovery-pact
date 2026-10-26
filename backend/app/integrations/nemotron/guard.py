@@ -157,7 +157,8 @@ class InjectionGuard:
             hit = self._cache.get(key)
         if hit:
             return Verdict(hit.unsafe, hit.model, hit.raw, cached=True, layers=hit.layers)
-        results = list(self._pool.map(lambda n: _run(n, text, key), LAYERS))
+        wanted = [x.strip() for x in get_settings().guard_layers.split(",") if x.strip() in LAYERS] or list(LAYERS)
+        results = list(self._pool.map(lambda n: _run(n, text, key), wanted))
         self.calls += len(results)
         layers = {n: f for n, f, _ in results}
         flagged_by = [n for n, f, _ in results if f]

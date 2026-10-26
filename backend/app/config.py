@@ -78,9 +78,13 @@ class Settings(BaseSettings):
     # Guard models served on this machine instead of the NVIDIA API (OpenAI-compatible, e.g. llama.cpp),
     # so untrusted production text never leaves it:
     # GUARD_LOCAL="nvidia/nemotron-3.5-content-safety=http://127.0.0.1:8091/v1,nvidia/llama-3.1-nemotron-safety-guard-8b-v3=http://127.0.0.1:8092/v1"
-    # A value of "nightshift" sends that guard model through Nightshift's local lane instead
+    # A value of "nightshift" sends that model through Nightshift's local lane instead (agent models
+    # too: a fully local pact sets MODEL_* to an on-machine Nemotron and lists it here)
     # (meterless/local, under the app id below, which Nightshift binds to on-machine models only).
     guard_local: str = ""
+    # Guard layers to run (safety_guard, judge, content_safety); empty runs all three. A fully local
+    # pact on a laptop CPU runs content_safety alone, the one guard model served on the machine.
+    guard_layers: str = ""
     meterless_local_app: str = "recoverypact-guard"
     recordings_dir: str = "./recordings"  # shipped recordings, read by replay
     record_dir: str = "./data/recordings"  # where live runs write new recordings
@@ -133,7 +137,7 @@ class Settings(BaseSettings):
     meterless_receipts_url: str = ""  # the read-only relay next to Nightshift
     meterless_receipt_key: str = ""  # Nightshift's public key (base64) or its 16-hex fingerprint
     receipt_models: str = "nvidia/nemotron"  # allowed model prefixes, comma-separated
-    receipt_egress: str = "nvidia,local"  # allowed prompt destinations
+    receipt_egress: str = "nvidia,local,none"  # allowed prompt destinations; "none": it never left the machine
     # Lanes: which Nemotron models may answer each role, e.g.
     # RECEIPT_LANES="database_guardian=nvidia/nemotron-3.5-super-vl-120b-a12b|nvidia/nemotron-3-ultra-550b-a55b"
     # A runtime can substitute a model; with a lane set, the receipt must name one of these.
@@ -142,6 +146,7 @@ class Settings(BaseSettings):
     # --- Demo ---
     checkout_timeout_ms: int = 3000
     traffic_rps: float = 4.0
+    incident_hold_scale: float = 1.0
     runs_dir: str = "./data/runs"
     logs_dir: str = "./logs"
 
