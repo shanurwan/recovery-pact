@@ -215,7 +215,7 @@ Both misses are kept, and both are explained by the records:
 
 ### Quickstart: sample mode, three commands
 
-No `.env`, no API key, no Zetaris, no Nightshift. The database, the authority, the executor and the verifier run live; the Nemotron decisions replay from the published benchmark recordings and are labeled as replays. Tested from a fresh clone on 25 Oct 2026.
+No `.env`, no API key, no Zetaris, no Nightshift. The database, the authority, the executor and the verifier run live; the Nemotron decisions replay from the published benchmark recordings and are labeled as replays. Tested from a fresh clone on 27 Oct 2026.
 
 ```bash
 git clone https://github.com/shanurwan/recovery-pact.git && cd recovery-pact
