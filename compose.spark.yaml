@@ -1,0 +1,98 @@
+# Overlay: the whole pact on one NVIDIA DGX Spark, with nothing leaving the box.
+#
+#   cp .env.spark.example .env.spark   # point each *_WEIGHTS at a local checkpoint
+#   docker compose --env-file .env.spark -f compose.yaml -f compose.spark.yaml up -d
+#
+# NOT YET RUN ON A SPARK. We do not have one. What has been measured is each piece on our own
+# hardware: Content Safety 4B served by llama.cpp scored the same as the hosted model
+# (evals/results/guard-bench-local), and the whole pact ran offline on Nano 4B with every answer
+# signed local-only (evals/results/local-pact). This file is the deployment those runs point to.
+#
+# Memory plan (weights only, our estimate; 128 GB unified memory):
+#   Super VL 120B-A12B  FP4  ~60 GB   both guardians + auditor (one shared instance)
+#   Lightning 30B-A3B   FP4  ~15 GB   guard layer 2, the reasoning judge
+#   Safety Guard 8B     BF16 ~16 GB   guard layer 1
+#   Content Safety 4B   BF16  ~8 GB   guard layer 3, our written policy as a native custom_policy
+#   Embed 1B            BF16  ~2 GB   H-MEM recall
+#   total                    ~101 GB
+# Each server's memory share below is set to that plan plus room for KV cache (sum 0.88).
+#
+# How the app reaches them: GUARD_LOCAL maps every model id to an on-box server, which the
+# client treats as provider "local", so no prompt goes to a hosted API. The embedder uses
+# NVIDIA_BASE_URL, which here is the on-box embed server. The NVIDIA key is a placeholder,
+# so a call that somehow missed the map would fail rather than leave the box.
+# If the embed server rejects a request, H-MEM falls back to its hash embedder (FallbackEmbedder).
+#
+# Signatures: these calls go straight to the on-box servers and carry no Nightshift receipt,
+# so the receipt gate (I8) is off here. With Nightshift's DGX Spark build running on the box,
+# set each guardian model in GUARD_LOCAL to "nightshift" and RECEIPT_GATE=true: every answer
+# is then signed local-only, as in evals/results/local-pact.
+
+x-vllm: &vllm
+  image: ${SPARK_VLLM_IMAGE:?set SPARK_VLLM_IMAGE to the NGC vLLM container for DGX Spark}
+  ipc: host
+  restart: unless-stopped
+  volumes:
+    - ${SPARK_MODELS_DIR:-./models}:/models:ro
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  spark-super:
+    <<: *vllm
+    command: >-
+      vllm serve /models/${SPARK_SUPER_WEIGHTS:?set SPARK_SUPER_WEIGHTS}
+      --served-model-name nvidia/nemotron-3.5-super-vl-120b-a12b
+      --gpu-memory-utilization 0.52 --max-model-len 32768 --trust-remote-code --port 8000
+
+  spark-lightning:
+    <<: *vllm
+    command: >-
+      vllm serve /models/${SPARK_LIGHTNING_WEIGHTS:?set SPARK_LIGHTNING_WEIGHTS}
+      --served-model-name nvidia/nemotron-3.5-lightning-30b-a3b
+      --gpu-memory-utilization 0.15 --max-model-len 16384 --trust-remote-code --port 8000
+
+  spark-safety-guard:
+    <<: *vllm
+    command: >-
+      vllm serve /models/${SPARK_SAFETY_GUARD_WEIGHTS:?set SPARK_SAFETY_GUARD_WEIGHTS}
+      --served-model-name nvidia/llama-3.1-nemotron-safety-guard-8b-v3
+      --gpu-memory-utilization 0.13 --max-model-len 8192 --port 8000
+
+  spark-content-safety:
+    <<: *vllm
+    command: >-
+      vllm serve /models/${SPARK_CONTENT_SAFETY_WEIGHTS:?set SPARK_CONTENT_SAFETY_WEIGHTS}
+      --served-model-name nvidia/nemotron-3.5-content-safety
+      --gpu-memory-utilization 0.06 --max-model-len 8192 --trust-remote-code --port 8000
+
+  spark-embed:
+    <<: *vllm
+    command: >-
+      vllm serve /models/${SPARK_EMBED_WEIGHTS:?set SPARK_EMBED_WEIGHTS}
+      --served-model-name nvidia/nemotron-3-embed-1b
+      --task embed --gpu-memory-utilization 0.02 --trust-remote-code --port 8000
+
+  api:
+    environment:
+      AI_PROVIDER: nvidia
+      NVIDIA_API_KEY: spark-local-no-hosted-key
+      NVIDIA_BASE_URL: http://spark-embed:8000/v1
+      NEMOTRON_MODEL: nvidia/nemotron-3.5-super-vl-120b-a12b
+      MODEL_DATABASE_GUARDIAN: nvidia/nemotron-3.5-super-vl-120b-a12b
+      MODEL_CONTINUITY_GUARDIAN: nvidia/nemotron-3.5-super-vl-120b-a12b
+      MODEL_AUDITOR: nvidia/nemotron-3.5-super-vl-120b-a12b
+      GUARD_LOCAL: >-
+        nvidia/nemotron-3.5-super-vl-120b-a12b=http://spark-super:8000/v1,nvidia/nemotron-3.5-lightning-30b-a3b=http://spark-lightning:8000/v1,nvidia/llama-3.1-nemotron-safety-guard-8b-v3=http://spark-safety-guard:8000/v1,nvidia/nemotron-3.5-content-safety=http://spark-content-safety:8000/v1
+      RECEIPT_GATE: "false"
+    depends_on:
+      - spark-super
+      - spark-lightning
+      - spark-safety-guard
+      - spark-content-safety
+      - spark-embed
