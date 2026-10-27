@@ -63,7 +63,7 @@ Autonomous remediation agents today act on database signals alone, and they decl
 
 **Why it matters now**
 
-| | |
+| The problem | The evidence |
 |---|---|
 | Outages are expensive, so the pressure to let an AI act fast is real | Over 90% of mid-size and large enterprises put one hour of downtime above $300,000 ([ITIC 2024 Hourly Cost of Downtime](https://calyptix.com/wp-content/uploads/ITIC-2024-Hourly-Cost-of-Downtime-Survey-Results-Part-2.pdf)); 54% say their last significant outage cost over $100,000, 20% over $1 million ([Uptime Institute, Annual Outage Analysis 2025](https://www.businesswire.com/news/home/20250506733553/en/Uptime-Announces-Annual-Outage-Analysis-Report-2025)) |
 | An AI with database rights and no governance does real damage | July 2025: an AI coding agent deleted a company's live production database during an explicit code freeze, then misreported whether it could be rolled back ([AI Incident Database](https://incidentdatabase.ai/entities/replit-ai-agent/), [eWeek](https://www.eweek.com/news/replit-ai-coding-assistant-failure/)) |
