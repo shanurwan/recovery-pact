@@ -10,6 +10,8 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 
 **▶ Watch it, no install: [recovery-pact.wnswaz.win](https://recovery-pact.wnswaz.win)**. These are real recorded runs, a typical AI agent next to RecoveryPact on the same incident.
 
+**📑 Slide deck: [RecoveryPact deck (PDF, Google Drive)](https://drive.google.com/drive/folders/1LzL3dq0d9b7iJ_ihsPQgcFOM9-4YYhk0)**
+
 | See it in a browser | What you'll see |
 |---|---|
 | [Replays](https://recovery-pact.wnswaz.win/replays.html) | Eight incidents replayed side by side: a typical AI agent vs RecoveryPact, same model, same live database |
@@ -22,6 +24,8 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 **Don't trust us, check it: `python scripts/prove.py`.** One command, no stack, no API key, no network, Python 3.9+ standard library only (Node 18+ is used if present). It re-validates every result directory from its raw traces, re-verifies all 794 Meterless Nightshift signatures from the signed envelopes committed next to the runs (and checks that a forged copy fails), recomputes the numbers on the website, and reports what each sponsor did. Today: `PASS: 67 passed, 0 failed`.
 
 > **Judges: start here (5 minutes).**
+>
+> **The pitch:** [slide deck (PDF)](https://drive.google.com/drive/folders/1LzL3dq0d9b7iJ_ihsPQgcFOM9-4YYhk0) · [live replay site](https://recovery-pact.wnswaz.win)
 >
 > **Quick run, sample mode** (Docker only: no `.env`, no API key; the database, authority, executor and verifier run live, and the Nemotron decisions replay from the published recordings):
 > ```bash
