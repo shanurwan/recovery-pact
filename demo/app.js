@@ -117,7 +117,7 @@ function money(d) {
     lines.push(`plus ${harm.text}`);
   }
   if (total === atRisk) lines.shift(); // the headline figure already says it
-  return { total, label, lines };
+  return { total, label, lines, atRisk };
 }
 
 async function select(id, scroll = true) {
@@ -189,10 +189,18 @@ function draw() {
     const done = state.clock >= (d.events.at(-1)?.t || 0);
     const v = d.verdict;
     const m = done ? money(d) : null;
+    // A right call did no damage; the slower checkout it cost is still stated, in the small print.
+    if (m && v.ok) {
+      const cost = `cost of the time it took: ${usd(m.atRisk)} of slower checkout`;
+      Object.assign(m, { big: "$0", label: "damage done",
+                         lines: [cost, ...m.lines.filter((l) => !l.endsWith("at risk during the run"))] });
+    } else if (m) {
+      m.big = m.label === "at stake" ? about(m.total) : usd(m.total);
+    }
     $(`#verdict-${key}`).innerHTML = done
       ? `<div class="verdict ${v.ok ? "good" : "bad"}"><span class="v-title">${v.ok ? "✓ Right call" : "✗ Wrong call"}</span>
           ${v.lines.map((l) => `<p>${esc(l)}</p>`).join("")}
-          <div class="v-money"><b>${esc(m.label === "at stake" ? about(m.total) : usd(m.total))}</b><span>${esc(m.label)}</span></div>
+          <div class="v-money"><b>${esc(m.big)}</b><span>${esc(m.label)}</span></div>
           <ul class="v-cost">${m.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
           <span class="v-stats">${esc(v.duration_s)} s run · ${esc(v.lost_checkouts ?? "–")} failed checkouts</span></div>`
       : `<div class="verdict pending">In progress…</div>`;
