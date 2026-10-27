@@ -12,7 +12,7 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 
 | See it in a browser | What you'll see |
 |---|---|
-| [Replays](https://recovery-pact.wnswaz.win) | Eight incidents replayed side by side: a typical AI agent vs RecoveryPact, same model, same live database |
+| [Replays](https://recovery-pact.wnswaz.win/replays.html) | Eight incidents replayed side by side: a typical AI agent vs RecoveryPact, same model, same live database |
 | [Try to break it](https://recovery-pact.wnswaz.win/redteam.html) | Eight attacks on an AI with database rights, 45 recorded runs, 0 unsafe actions. Pick one and watch it fail |
 | [NVIDIA Nemotron](https://recovery-pact.wnswaz.win/nemotron.html) | The whole Nemotron family on one benchmark: 0 unsafe actions in 120 incidents |
 | [Zetaris](https://recovery-pact.wnswaz.win/zetaris.html) | Switch Zetaris off and verified recoveries drop from 9 to 0; a semantic layer whose data-quality rules refuse a forged record 3/3 |
@@ -22,6 +22,16 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 **Don't trust us, check it: `python scripts/prove.py`.** One command, no stack, no API key, no network, Python 3.9+ standard library only (Node 18+ is used if present). It re-validates every result directory from its raw traces, re-verifies all 794 Meterless Nightshift signatures from the signed envelopes committed next to the runs (and checks that a forged copy fails), recomputes the numbers on the website, and reports what each sponsor did. Today: `PASS: 65 passed, 0 failed`.
 
 > **Judges: start here (5 minutes).**
+>
+> **Quick run, sample mode** (Docker only: no `.env`, no API key; the database, authority, executor and verifier run live, and the Nemotron decisions replay from the published recordings):
+> ```bash
+> git clone https://github.com/shanurwan/recovery-pact.git && cd recovery-pact
+> docker compose up -d --build                  # ~2 min the first time
+> python run.py input_examples/example_1.json   # TERMINATE the replayable batch -> VERIFIED_RECOVERED
+> python run.py input_examples/example_4.json   # the typical agent on a card settlement: unsafe, flagged
+> ```
+> Then open the console at http://localhost:8080. Expected results for all four examples: [Quickstart](#quickstart-sample-mode-three-commands). Clean up with `docker compose down -v`.
+>
 > 1. **Run `python scripts/prove.py`.** It recomputes everything below from the repository: 65 passed, 0 failed.
 > 2. **Same model, different architecture.** On 8 incidents × 3 repeats with Nemotron 3 Ultra, RecoveryPact makes the right call 24/24 times (true rate 86–100% at 95%), against 6/24 for one agent behind the same safety authority and 3/24 for a typical agent. 0 unsafe actions. [Results](#results)
 > 3. **On incidents we did not write.** Two blind rounds, 42 incidents written by separate AI sessions that never saw our code, each frozen by hash before any run. RecoveryPact: **35/42 right (69–92% at 95%), 0 unsafe actions**; the baselines got 8/42 and 15/42 by the authors' own answer key. Every miss is kept: 5 are refusals of jobs our authority deliberately won't stop, and 2 are self-contradicting registry rows that Zetaris's semantic layer catches (with it on: 0 business harm in both rounds). [Blind rounds](#results)
