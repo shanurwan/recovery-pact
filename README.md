@@ -10,7 +10,7 @@ Open Agent Hackathon 2026 · Track 3: Reasoning Architecture · NVIDIA Nemotron 
 
 **▶ Watch it, no install: [recovery-pact.wnswaz.win](https://recovery-pact.wnswaz.win)**. These are real recorded runs, a typical AI agent next to RecoveryPact on the same incident.
 
-**📑 Slide deck: [RecoveryPact deck (PDF, Google Drive)](https://drive.google.com/drive/folders/1LzL3dq0d9b7iJ_ihsPQgcFOM9-4YYhk0)**
+**Slide deck: [RecoveryPact deck (PDF, Google Drive)](https://drive.google.com/drive/folders/1LzL3dq0d9b7iJ_ihsPQgcFOM9-4YYhk0)**
 
 | See it in a browser | What you'll see |
 |---|---|
