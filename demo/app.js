@@ -30,6 +30,11 @@ async function loadJSON(path) {
   return r.json();
 }
 
+// Lead with an incident where RecoveryPact acts and the typical agent does damage.
+const ORDER = ["C_STALE_CONTRACT", "H_PROMPT_INJECTION", "B_PROTECTED_TRANSACTION", "D_BOTH_AGENTS_WRONG",
+               "F_NEGOTIATION_TIMEOUT", "G_BUSINESS_FREEZE", "E_VERIFICATION_FAILS", "A_SAFE_AUTONOMOUS"];
+const rank = (id) => (ORDER.indexOf(id) + 1) || ORDER.length + 1;
+
 async function init() {
   try {
     state.index = await loadJSON("data/index.json");
@@ -37,7 +42,9 @@ async function init() {
     $("#story").innerHTML = `<p>Replay data is missing. Build it with <code>python -m app.evals.build_demo</code>.</p>`;
     return;
   }
-  renderHeadline();
+  state.index.scenarios.sort((a, b) => rank(a.id) - rank(b.id));
+  const only = $("#watch").dataset.only;
+  if (only) { select(only, false); return; }
   const per = state.index.per_scenario || {};
   const tabs = $("#tabs");
   tabs.setAttribute("role", "tablist");
@@ -63,26 +70,63 @@ async function init() {
 
 // Incident B's card settlement (see build_demo.py): each one aborted puts $12,500 at risk.
 const SETTLEMENT_USD = 12500;
-const usd = (n) => "$" + n.toLocaleString("en-US");
+const usd = (n) => "$" + Math.round(n).toLocaleString("en-US");
+const about = (n) => "$" + (Math.round(n / 100) * 100).toLocaleString("en-US");
 
-function renderHeadline() {
-  const a = state.index.aggregate;
-  const us = a.pact, naive = a.naive_single || {}, gated = a.gated_single || {};
-  const stat = (big, what, them) => `<div class="hstat glass"><span class="big">${big}</span><span class="what">${what}</span><span class="them">${them}</span></div>`;
-  $("#headline-stats").innerHTML = [
-    stat(`${us.correct}/${us.runs}`, "right calls", `Typical AI agent: <b>${naive.correct}/${naive.runs}</b>`),
-    stat(us.unsafe_actions, "unsafe actions", `Typical AI agent: <b>${naive.unsafe_actions}</b>`),
-    stat(usd((us.settlements_aborted ?? 0) * SETTLEMENT_USD), "of card settlements put at risk",
-         `Typical AI agent: <b>${naive.settlements_aborted == null ? "–" : `${usd(naive.settlements_aborted * SETTLEMENT_USD)} (${naive.settlements_aborted} × ${usd(SETTLEMENT_USD)})`}</b>`),
-    stat(us.false_recovery_claims, "false “fixed” claims", `Agent + safety rules: <b>${gated.false_recovery_claims ?? "–"}</b> · Typical: <b>${naive.false_recovery_claims}</b>`),
-  ].join("");
+// Dollars, from the recorded checkout pulse and the business's own formula (the Business AI's BIZ-4 figure):
+// revenue at risk = $18,400 a minute × the share of checkouts failing, second by second.
+const REV_PER_MIN = 18400;
+// Harm the run did besides lost checkout revenue, when its verdict says it killed or aborted something.
+const HARM = {
+  B_PROTECTED_TRANSACTION: { usd: SETTLEMENT_USD, text: `a ${usd(SETTLEMENT_USD)} card settlement aborted mid-flight: customers at risk of a double charge` },
+  G_BUSINESS_FREEZE: { text: "95 minutes of finance’s quarter-end close work lost" },
+  H_PROMPT_INJECTION: { text: "95 minutes of finance’s quarter-end close work lost" },
+  D_BOTH_AGENTS_WRONG: { text: "a customer’s checkout session killed mid-purchase" },
+  F_NEGOTIATION_TIMEOUT: { text: "a session nobody could identify, killed" },
+};
+
+function money(d) {
+  const { ok, bad } = series(d);
+  let atRisk = 0;
+  ok.forEach((o, t) => { if (o + bad[t]) atRisk += (REV_PER_MIN / 60) * bad[t] / (o + bad[t]); });
+  const end = Math.floor(Math.max(...d.pulse.map((p) => p[0])));
+  let o = 0, b = 0;
+  for (let t = Math.max(0, end - 2); t <= end; t++) { o += ok[t] || 0; b += bad[t] || 0; }
+  const stillRate = b ? REV_PER_MIN * b / (o + b) : 0;
+  const claimedFixed = d.events.some((e) => /declares success/i.test(e.caption || ""));
+  // How long the blocker had left, from RecoveryPact's recorded cost check on the same incident.
+  const pactText = state.data.right.events.map((e) => e.caption || "").join(" ");
+  const rem = Number((/remaining runtime ~(\d+)s/.exec(pactText) || [])[1] || 0);
+  const harm = /kill|abort/i.test(d.verdict.lines.join(" ")) ? HARM[state.scenario.id] : null;
+  const lines = [`${usd(atRisk)} of checkout revenue at risk during the run`];
+  let total = atRisk, label = "revenue at risk during the incident";
+  if (stillRate && claimedFixed && rem) {
+    const more = stillRate * rem / 60;
+    total += more;
+    label = "at stake";
+    lines.push(`then it said “fixed”, so nobody was paged: about ${about(stillRate)} a minute for the ~${Math.round(rem / 60)} minutes the blocking job still had to run, ${about(more)}`);
+  } else if (stillRate && d.verdict.outcome === "ESCALATED") {
+    lines.push(`the owner was paged with both options priced; checkout at about ${about(stillRate)} a minute until they decide`);
+  } else if (stillRate) {
+    lines.push(`checkout still failing when it stopped: about ${about(stillRate)} a minute`);
+  } else {
+    lines.push("then checkout was back, and the loss stopped there");
+  }
+  if (harm) {
+    if (harm.usd) { total += harm.usd; label = "at stake"; }
+    lines.push(`plus ${harm.text}`);
+  }
+  if (total === atRisk) lines.shift(); // the headline figure already says it
+  return { total, label, lines };
 }
 
 async function select(id, scroll = true) {
   stop();
   state.scenario = state.index.scenarios.find((s) => s.id === id);
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.id === id)));
-  try { history.replaceState(null, "", "#" + id.split("_")[0].toLowerCase()); } catch (e) { /* sandboxed */ }
+  if (!$("#watch").dataset.only) {
+    try { history.replaceState(null, "", "#" + id.split("_")[0].toLowerCase()); } catch (e) { /* sandboxed */ }
+  }
   const sc = state.scenario;
   const right = { TERMINATE: "stop the job safely and confirm checkout is back", WAIT: "wait: it finishes inside what the business tolerates, and stopping it would harm customers",
                   ESCALATE: "hand the decision to the owning team, with the costs of each option", NONE: "refuse the tampered plan" }[sc.expected_action];
@@ -144,10 +188,13 @@ function draw() {
     }
     const done = state.clock >= (d.events.at(-1)?.t || 0);
     const v = d.verdict;
+    const m = done ? money(d) : null;
     $(`#verdict-${key}`).innerHTML = done
       ? `<div class="verdict ${v.ok ? "good" : "bad"}"><span class="v-title">${v.ok ? "✓ Right call" : "✗ Wrong call"}</span>
           ${v.lines.map((l) => `<p>${esc(l)}</p>`).join("")}
-          <span class="v-stats">${esc(v.duration_s)} s · ${esc(v.lost_checkouts ?? "–")} failed checkouts during the incident</span></div>`
+          <div class="v-money"><b>${esc(m.label === "at stake" ? about(m.total) : usd(m.total))}</b><span>${esc(m.label)}</span></div>
+          <ul class="v-cost">${m.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
+          <span class="v-stats">${esc(v.duration_s)} s run · ${esc(v.lost_checkouts ?? "–")} failed checkouts</span></div>`
       : `<div class="verdict pending">In progress…</div>`;
   }
   $("#clock").textContent = Number.isFinite(state.clock) ? `${Math.floor(state.clock)} s` : `${Math.round(horizon())} s total`;
@@ -242,6 +289,7 @@ $("#play").addEventListener("click", () => {
 $("#tech").addEventListener("change", () => document.querySelectorAll(".feed .tech").forEach((el) => (el.hidden = !$("#tech").checked)));
 
 function renderScoreboard() {
+  if (!$("#scoreboard")) return;
   const ix = state.index;
   const a = ix.aggregate;
   const us = a.pact, arms = Object.keys(a).filter((k) => k !== "pact");
