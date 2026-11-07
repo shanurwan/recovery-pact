@@ -1,0 +1,51 @@
+name: add portfolio cname
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dns:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Point shafiqah.wnswaz.win at Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python3 - << 'PY'
+          import json, os, urllib.request, urllib.error
+          token = os.environ["CLOUDFLARE_API_TOKEN"]
+          def call(method, url, body=None):
+              data = None if body is None else json.dumps(body).encode()
+              req = urllib.request.Request(url, data=data, method=method, headers={
+                  "Authorization": "Bearer " + token,
+                  "Content-Type": "application/json",
+              })
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return r.status, json.load(r)
+              except urllib.error.HTTPError as e:
+                  raw = e.read().decode()
+                  try:
+                      return e.code, json.loads(raw)
+                  except Exception:
+                      return e.code, {"raw": raw[:300]}
+          code, zones = call("GET", "https://api.cloudflare.com/client/v4/zones?name=wnswaz.win")
+          print("zones", code, "success", zones.get("success"), "n", len(zones.get("result") or []))
+          if not zones.get("result"):
+              print("errors", zones.get("errors"))
+              raise SystemExit(1)
+          zid = zones["result"][0]["id"]
+          code, recs = call("GET", f"https://api.cloudflare.com/client/v4/zones/{zid}/dns_records?name=shafiqah.wnswaz.win")
+          print("list", code, "n", len(recs.get("result") or []))
+          existing = recs.get("result") or []
+          body = {"type": "CNAME", "name": "shafiqah", "content": "shafiqah.pages.dev", "proxied": True, "ttl": 1}
+          if existing:
+              code, out = call("PUT", f"https://api.cloudflare.com/client/v4/zones/{zid}/dns_records/{existing[0]['id']}", body)
+          else:
+              code, out = call("POST", f"https://api.cloudflare.com/client/v4/zones/{zid}/dns_records", body)
+          print("write", code, "success", out.get("success") if isinstance(out, dict) else None)
+          if isinstance(out, dict) and not out.get("success"):
+              print("errors", out.get("errors"))
+              raise SystemExit(1)
+          PY
