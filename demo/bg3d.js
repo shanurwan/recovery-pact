@@ -1,7 +1,8 @@
-// Background scene: the incident itself, in 3D.
-// Core = the database. Particles = checkouts flowing in (green when they succeed,
-// red and stalled when they fail). Rings = Database AI (blue), Business AI (green),
-// Safety authority (amber). window.rpScene.setHealth(0..1) is driven by the replay.
+// Background scene: the incident itself, in 3D, kept quiet enough to read over.
+// Globe of dots = the database. Orbits = Database AI (blue), Business AI (green),
+// Safety authority (amber). Comets = checkouts arriving. Floor = a slow field of
+// traffic. window.rpScene.setHealth(0..1) is driven by the replay: as checkout
+// fails, the scene warms to red and the field turns choppy.
 "use strict";
 
 (function () {
@@ -21,122 +22,123 @@
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, small ? 1.25 : 1.75));
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x08090b, 0.045);
-  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
-  camera.position.set(0, 1.2, small ? 15 : 12);
+  scene.fog = new THREE.FogExp2(0x07080c, 0.03);
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 120);
 
-  const world = new THREE.Group();
-  scene.add(world);
+  const C = {
+    ink: new THREE.Color(0xc9d3e6),
+    ok: new THREE.Color(0x84c441),
+    bad: new THREE.Color(0xf2645a),
+    db: new THREE.Color(0x8ab4f8),
+    gate: new THREE.Color(0xe9b44c),
+  };
 
-  // Soft round particle sprite (points are square without a texture).
   function dotTexture() {
     const c = document.createElement("canvas");
     c.width = c.height = 64;
     const g = c.getContext("2d");
     const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
     grd.addColorStop(0, "rgba(255,255,255,1)");
-    grd.addColorStop(0.35, "rgba(255,255,255,0.65)");
+    grd.addColorStop(0.3, "rgba(255,255,255,0.7)");
     grd.addColorStop(1, "rgba(255,255,255,0)");
     g.fillStyle = grd;
     g.fillRect(0, 0, 64, 64);
-    const t = new THREE.CanvasTexture(c);
-    return t;
+    return new THREE.CanvasTexture(c);
   }
   const dot = dotTexture();
 
-  const C = {
-    ok: new THREE.Color(0x76b900),
-    bad: new THREE.Color(0xff5f57),
-    db: new THREE.Color(0x7ea6d8),
-    biz: new THREE.Color(0x76b900),
-    gate: new THREE.Color(0xf2b441),
-  };
+  const world = new THREE.Group();
+  scene.add(world);
 
-  // Core: the database
-  const core = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(1.15, 2),
-    new THREE.MeshBasicMaterial({ color: 0x7ea6d8, wireframe: true, transparent: true, opacity: 0.55 })
-  );
-  world.add(core);
-  const glow = new THREE.Mesh(
-    new THREE.SphereGeometry(0.85, 32, 32),
-    new THREE.MeshBasicMaterial({ color: 0x1d2a12, transparent: true, opacity: 0.55 })
-  );
-  world.add(glow);
-
-  // Rings: two guardians and the authority around them
-  function ring(radius, color, tilt, width, opacity) {
-    const m = new THREE.Mesh(
-      new THREE.TorusGeometry(radius, width, 8, 160),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity })
-    );
-    m.rotation.x = tilt[0];
-    m.rotation.y = tilt[1];
-    world.add(m);
-    return m;
+  // The database: an even shell of dots (Fibonacci sphere), lit from one side.
+  const GN = small ? 1400 : 2600, R = 2.6;
+  const gPos = new Float32Array(GN * 3), gCol = new Float32Array(GN * 3), gBase = new Float32Array(GN);
+  for (let i = 0; i < GN; i++) {
+    const y = 1 - (i / (GN - 1)) * 2, r = Math.sqrt(1 - y * y), th = i * 2.399963229728653;
+    gPos[i * 3] = Math.cos(th) * r * R; gPos[i * 3 + 1] = y * R; gPos[i * 3 + 2] = Math.sin(th) * r * R;
+    gBase[i] = 0.5 + 0.8 * Math.max(0, (Math.cos(th) * r * 0.6 + y * 0.5 + 0.55));
   }
-  const ringDb = ring(2.3, C.db, [1.15, 0.25], 0.018, 0.75);
-  const ringBiz = ring(2.75, C.biz, [1.75, -0.35], 0.018, 0.75);
-  const ringGate = ring(3.6, C.gate, [Math.PI / 2, 0], 0.01, 0.45);
-
-  // Guardian beacons riding their rings
-  function beacon(color) {
-    const b = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 16), new THREE.MeshBasicMaterial({ color }));
-    world.add(b);
-    return b;
-  }
-  const bDb = beacon(C.db);
-  const bBiz = beacon(C.biz);
-
-  // Checkout particles: born on a far shell, travel to the core
-  const N = small ? 900 : 1800;
-  const pos = new Float32Array(N * 3);
-  const col = new Float32Array(N * 3);
-  const start = new Float32Array(N * 3);
-  const prog = new Float32Array(N);
-  const speed = new Float32Array(N);
-  function respawn(i) {
-    const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, r = 9 + Math.random() * 6;
-    const s = Math.sqrt(1 - u * u);
-    start[i * 3] = r * s * Math.cos(th);
-    start[i * 3 + 1] = r * u * 0.6;
-    start[i * 3 + 2] = r * s * Math.sin(th);
-    prog[i] = Math.random() * 0.15;
-    speed[i] = 0.06 + Math.random() * 0.08;
-  }
-  for (let i = 0; i < N; i++) { respawn(i); prog[i] = Math.random(); }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-  const points = new THREE.Points(geo, new THREE.PointsMaterial({
-    size: small ? 0.16 : 0.14, map: dot, alphaTest: 0.01, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false,
-    blending: THREE.AdditiveBlending,
+  const globeGeo = new THREE.BufferGeometry();
+  globeGeo.setAttribute("position", new THREE.BufferAttribute(gPos, 3));
+  globeGeo.setAttribute("color", new THREE.BufferAttribute(gCol, 3));
+  const globe = new THREE.Points(globeGeo, new THREE.PointsMaterial({
+    size: small ? 0.12 : 0.1, map: dot, vertexColors: true, transparent: true, opacity: 1,
+    depthWrite: false, blending: THREE.AdditiveBlending,
   }));
-  world.add(points);
+  world.add(globe);
+  // A dark core so the back of the shell reads as depth, not noise.
+  const core = new THREE.Mesh(new THREE.SphereGeometry(R * 0.97, 48, 48), new THREE.MeshBasicMaterial({ color: 0x07080c, transparent: true, opacity: 0.55 }));
+  world.add(core);
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(R * 1.35, 48, 48), new THREE.MeshBasicMaterial({ color: 0x1a2a4a, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }));
+  world.add(halo);
 
-  // Far starfield for depth
-  const starGeo = new THREE.BufferGeometry();
-  const sp = new Float32Array(600 * 3);
-  for (let i = 0; i < 600; i++) {
-    sp[i * 3] = (Math.random() - 0.5) * 80;
-    sp[i * 3 + 1] = (Math.random() - 0.5) * 50;
-    sp[i * 3 + 2] = -10 - Math.random() * 40;
+  // Orbits: thin lines, each with a small beacon.
+  function orbit(radius, color, tilt, opacity) {
+    const pts = [];
+    for (let k = 0; k <= 256; k++) { const a = (k / 256) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius)); }
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
+    const g = new THREE.Group();
+    g.rotation.set(tilt[0], tilt[1], tilt[2]);
+    g.add(line);
+    const b = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 16), new THREE.MeshBasicMaterial({ color }));
+    const glowB = new THREE.Sprite(new THREE.SpriteMaterial({ map: dot, color, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending }));
+    glowB.scale.setScalar(0.55);
+    b.add(glowB);
+    g.add(b);
+    world.add(g);
+    return { g, line, b, radius };
   }
-  starGeo.setAttribute("position", new THREE.BufferAttribute(sp, 3));
-  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 0.12, map: dot, color: 0x9aa0a6, transparent: true, opacity: 0.45, depthWrite: false })));
+  const oDb = orbit(3.5, C.db, [0.42, 0, 0.18], 0.4);
+  const oBiz = orbit(4.1, C.ok, [-0.3, 0, -0.32], 0.36);
+  const oGate = orbit(4.9, C.gate, [0.08, 0, 0.04], 0.22);
 
-  // Health 1 = flowing and green; 0 = stalled and red. Eased toward the target.
+  // Checkouts: comets that arrive from the far field and land on the globe.
+  const PN = small ? 260 : 520;
+  const pPos = new Float32Array(PN * 3), pCol = new Float32Array(PN * 3);
+  const pFrom = new Float32Array(PN * 3), pProg = new Float32Array(PN), pSpd = new Float32Array(PN), pFail = new Uint8Array(PN);
+  function spawn(i) {
+    const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, r = 12 + Math.random() * 8, s = Math.sqrt(1 - u * u);
+    pFrom[i * 3] = r * s * Math.cos(th); pFrom[i * 3 + 1] = r * u * 0.5; pFrom[i * 3 + 2] = r * s * Math.sin(th);
+    pProg[i] = 0; pSpd[i] = 0.05 + Math.random() * 0.06;
+  }
+  for (let i = 0; i < PN; i++) { spawn(i); pProg[i] = Math.random(); }
+  const pGeo = new THREE.BufferGeometry();
+  pGeo.setAttribute("position", new THREE.BufferAttribute(pPos, 3));
+  pGeo.setAttribute("color", new THREE.BufferAttribute(pCol, 3));
+  world.add(new THREE.Points(pGeo, new THREE.PointsMaterial({
+    size: small ? 0.2 : 0.17, map: dot, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending,
+  })));
+
+  // Floor: a wide field of dots rolling in slow waves.
+  const FX = small ? 70 : 120, FZ = small ? 40 : 60, SP = 0.55;
+  const FN = FX * FZ;
+  const fPos = new Float32Array(FN * 3), fCol = new Float32Array(FN * 3);
+  for (let x = 0; x < FX; x++) for (let z = 0; z < FZ; z++) {
+    const i = x * FZ + z;
+    fPos[i * 3] = (x - FX / 2) * SP; fPos[i * 3 + 1] = 0; fPos[i * 3 + 2] = -z * SP + 8;
+  }
+  const fGeo = new THREE.BufferGeometry();
+  fGeo.setAttribute("position", new THREE.BufferAttribute(fPos, 3));
+  fGeo.setAttribute("color", new THREE.BufferAttribute(fCol, 3));
+  const floor = new THREE.Points(fGeo, new THREE.PointsMaterial({
+    size: 0.09, map: dot, vertexColors: true, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  floor.position.y = -3.6;
+  scene.add(floor);
+
   let health = 1, target = 1;
-  const tmp = new THREE.Color();
+  const tmp = new THREE.Color(), tint = new THREE.Color();
 
+  let wide = true;
   function resize() {
     const w = window.innerWidth, h = window.innerHeight;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    // Centred behind the whole page; slightly smaller on portrait screens.
-    world.position.set(0, 0, 0);
-    world.scale.setScalar(w / h > 1 ? 1.75 : 1.1);
+    // Wide screens: the globe sits to the right of the reading column. Narrow: behind it, smaller.
+    wide = w / h > 1.15 && w > 900;
+    world.position.set(wide ? 5.4 : 0, wide ? 0.6 : 1.6, 0);
+    world.scale.setScalar(wide ? 1 : 0.8);
   }
   window.addEventListener("resize", resize);
   resize();
@@ -159,49 +161,79 @@
     if (running) { last = performance.now(); requestAnimationFrame(frame); }
   });
 
+  camera.position.set(0, 1.4, small ? 17 : 14);
+
   function step(dt, t) {
     health += (target - health) * Math.min(1, dt * 2.2);
-    const flow = 0.18 + 0.82 * health; // stalled traffic barely moves
-    for (let i = 0; i < N; i++) {
-      // Failing checkouts queue up just outside the authority ring instead of reaching the core.
-      const limit = 1 - (1 - health) * 0.62;
-      prog[i] += speed[i] * dt * flow;
-      if (prog[i] >= 1 || (health < 0.5 && prog[i] > limit && Math.random() < 0.002)) respawn(i);
-      const p = Math.min(prog[i], limit + (prog[i] > limit ? (prog[i] - limit) * 0.05 : 0));
-      const e = p * p * (3 - 2 * p);
-      const swirl = (1 - e) * 1.4 + t * 0.15;
-      const sx = start[i * 3], sy = start[i * 3 + 1], sz = start[i * 3 + 2];
-      const cx = sx * (1 - e), cy = sy * (1 - e), cz = sz * (1 - e);
-      const cs = Math.cos(swirl * 0.35), sn = Math.sin(swirl * 0.35);
-      pos[i * 3] = cx * cs - cz * sn;
-      pos[i * 3 + 1] = cy;
-      pos[i * 3 + 2] = cx * sn + cz * cs;
-      const failing = Math.random() > health ? 1 : 0;
-      tmp.copy(C.ok).lerp(C.bad, failing ? 0.95 : (1 - health) * 0.35);
-      const fade = 0.35 + 0.65 * Math.min(1, e * 1.6);
-      col[i * 3] = tmp.r * fade; col[i * 3 + 1] = tmp.g * fade; col[i * 3 + 2] = tmp.b * fade;
-    }
-    geo.attributes.position.needsUpdate = true;
-    geo.attributes.color.needsUpdate = true;
+    const sick = 1 - health;
+    tint.copy(C.ink).lerp(C.bad, sick * 0.85);
 
-    core.rotation.y += dt * (0.15 + 0.35 * health);
-    core.rotation.x += dt * 0.05;
-    core.material.color.copy(C.db).lerp(C.bad, (1 - health) * 0.8);
-    glow.material.color.setHex(0x1d2a12).lerp(new THREE.Color(0x5a1420), (1 - health) * 0.9);
-    const pulse = 1 + Math.sin(t * (health < 0.6 ? 6 : 1.6)) * (health < 0.6 ? 0.06 : 0.025);
-    glow.scale.setScalar(pulse);
-    ringDb.rotation.z += dt * 0.35;
-    ringBiz.rotation.z -= dt * 0.28;
-    ringGate.rotation.z += dt * 0.06;
-    ringGate.material.opacity = 0.35 + (1 - health) * 0.4;
-    const a = t * 0.9, b = -t * 0.7;
-    bDb.position.set(Math.cos(a) * 2.3, Math.sin(a) * 2.3 * Math.cos(1.15), Math.sin(a) * 2.3 * Math.sin(1.15));
-    bBiz.position.set(Math.cos(b) * 2.75, Math.sin(b) * 2.75 * Math.cos(1.75), Math.sin(b) * 2.75 * Math.sin(1.75));
-    camera.position.x += (mx * 1.2 - camera.position.x) * dt * 0.8;
-    camera.position.y += (1.2 - my * 0.8 - camera.position.y) * dt * 0.8;
-    world.rotation.y += ((scrollT * Math.PI * 1.2) - world.rotation.y) * dt * 1.5;
-    world.rotation.x += ((scrollT * 0.5) - world.rotation.x) * dt * 1.5;
-    camera.lookAt(0, 0, 0);
+    // Globe: lit dots, a slow scan band, warming to red as checkout fails.
+    for (let i = 0; i < GN; i++) {
+      const y = gPos[i * 3 + 1] / R;
+      const band = Math.max(0, 1 - Math.abs(y - Math.sin(t * 0.35) * 0.9) * 7);
+      const k = gBase[i] * (0.75 + 0.6 * band);
+      tmp.copy(C.db).lerp(tint, 0.55 + sick * 0.45).lerp(C.ok, band * 0.35 * health);
+      gCol[i * 3] = tmp.r * k; gCol[i * 3 + 1] = tmp.g * k; gCol[i * 3 + 2] = tmp.b * k;
+    }
+    globeGeo.attributes.color.needsUpdate = true;
+    globe.rotation.y += dt * (0.05 + 0.08 * health);
+    halo.material.color.setHex(0x1a2a4a).lerp(new THREE.Color(0x4a1418), sick);
+    halo.scale.setScalar(1 + Math.sin(t * (health < 0.6 ? 4 : 1.2)) * (health < 0.6 ? 0.04 : 0.015));
+
+    // Orbits and beacons
+    const orbits = [[oDb, 0.45], [oBiz, -0.36], [oGate, 0.12]];
+    for (const [o, s] of orbits) {
+      const a = t * s;
+      o.b.position.set(Math.cos(a) * o.radius, 0, Math.sin(a) * o.radius);
+    }
+    oGate.line.material.opacity = 0.22 + sick * 0.4;
+    oDb.g.rotation.y += dt * 0.03;
+    oBiz.g.rotation.y -= dt * 0.025;
+
+    // Comets: failing ones stall at the authority's orbit instead of landing.
+    const flow = 0.2 + 0.8 * health;
+    for (let i = 0; i < PN; i++) {
+      pProg[i] += pSpd[i] * dt * flow;
+      if (pProg[i] >= 1) { spawn(i); pFail[i] = Math.random() > health ? 1 : 0; }
+      const stop = pFail[i] ? 0.72 : 1;
+      const p = Math.min(pProg[i], stop);
+      if (pFail[i] && pProg[i] > 0.95) spawn(i);
+      const e = 1 - Math.pow(1 - p, 2.2);
+      const sx = pFrom[i * 3], sy = pFrom[i * 3 + 1], sz = pFrom[i * 3 + 2];
+      const len = Math.hypot(sx, sy, sz), end = (R * 1.02) / len;
+      const f = 1 - e * (1 - end);
+      const sw = (1 - e) * 0.9;
+      const cs = Math.cos(sw), sn = Math.sin(sw);
+      const x = sx * f, z = sz * f;
+      pPos[i * 3] = x * cs - z * sn; pPos[i * 3 + 1] = sy * f; pPos[i * 3 + 2] = x * sn + z * cs;
+      tmp.copy(pFail[i] ? C.bad : C.ok).lerp(C.ink, pFail[i] ? 0 : 0.35);
+      const fade = Math.min(1, p * 3) * (pFail[i] ? 1 : 1 - Math.max(0, (p - 0.92) / 0.08));
+      pCol[i * 3] = tmp.r * fade; pCol[i * 3 + 1] = tmp.g * fade; pCol[i * 3 + 2] = tmp.b * fade;
+    }
+    pGeo.attributes.position.needsUpdate = true;
+    pGeo.attributes.color.needsUpdate = true;
+
+    // Floor waves: calm when healthy, choppy when failing.
+    const amp = 0.35 + sick * 0.55, fr = 0.55 + sick * 0.5;
+    for (let i = 0; i < FN; i++) {
+      const x = fPos[i * 3], z = fPos[i * 3 + 2];
+      const yv = Math.sin(x * 0.28 * fr + t * 0.5) * Math.cos(z * 0.22 * fr + t * 0.35) * amp
+        + Math.sin((x + z) * 0.12 + t * 0.25) * amp * 0.6;
+      fPos[i * 3 + 1] = yv;
+      const k = 0.35 + Math.max(0, yv / (amp * 1.6)) * 0.8;
+      tmp.copy(C.db).lerp(tint, 0.5 + sick * 0.5);
+      fCol[i * 3] = tmp.r * k; fCol[i * 3 + 1] = tmp.g * k; fCol[i * 3 + 2] = tmp.b * k;
+    }
+    fGeo.attributes.position.needsUpdate = true;
+    fGeo.attributes.color.needsUpdate = true;
+
+    // Camera drifts with the pointer; scrolling turns the world and lowers the view.
+    camera.position.x += (mx * 0.9 - camera.position.x) * dt * 0.8;
+    camera.position.y += (1.4 - my * 0.6 - scrollT * 1.2 - camera.position.y) * dt * 0.8;
+    world.rotation.y += ((scrollT * Math.PI * 0.9) - world.rotation.y) * dt * 1.5;
+    world.rotation.x += ((0.18 + scrollT * 0.25) - world.rotation.x) * dt * 1.5;
+    camera.lookAt(wide ? 2.2 : 0, 0, 0);
   }
 
   function frame(now) {
