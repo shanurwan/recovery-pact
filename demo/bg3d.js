@@ -135,10 +135,10 @@
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    // Wide screens: the globe sits to the right of the reading column. Narrow: behind it, smaller.
+    // The globe sits centred behind the centred text, pushed back a little so the words stay readable.
     wide = w / h > 1.15 && w > 900;
-    world.position.set(wide ? 5.4 : 0, wide ? 0.6 : 1.6, 0);
-    world.scale.setScalar(wide ? 1 : 0.8);
+    world.position.set(0, wide ? 0.2 : 1.2, wide ? -3 : -1);
+    world.scale.setScalar(wide ? 1.15 : 0.8);
   }
   window.addEventListener("resize", resize);
   resize();
@@ -233,7 +233,7 @@
     camera.position.y += (1.4 - my * 0.6 - scrollT * 1.2 - camera.position.y) * dt * 0.8;
     world.rotation.y += ((scrollT * Math.PI * 0.9) - world.rotation.y) * dt * 1.5;
     world.rotation.x += ((0.18 + scrollT * 0.25) - world.rotation.x) * dt * 1.5;
-    camera.lookAt(wide ? 2.2 : 0, 0, 0);
+    camera.lookAt(0, 0, 0);
   }
 
   function frame(now) {
